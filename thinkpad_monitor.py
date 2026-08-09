@@ -5,53 +5,134 @@ import psutil
 
 # --- Sensor Retrieval Functions ---
 
+# --- Dynamic Sensor Helper Functions ---
+
+def find_hwmon_dir(name):
+    if not os.path.exists("/sys/class/hwmon"):
+        return None
+    for d in os.listdir("/sys/class/hwmon"):
+        path = os.path.join("/sys/class/hwmon", d)
+        name_file = os.path.join(path, "name")
+        if os.path.exists(name_file):
+            try:
+                with open(name_file, "r") as f:
+                    if name.lower() in f.read().strip().lower():
+                        return path
+            except Exception:
+                pass
+    return None
+
+def find_battery_dir():
+    for bat in ["BAT1", "BAT0", "BAT"]:
+        p = f"/sys/class/power_supply/{bat}"
+        if os.path.exists(p):
+            return p
+    return None
+
+def find_drm_device_dir():
+    if not os.path.exists("/sys/class/drm"):
+        return None
+    for card in ["card1", "card0", "card2"]:
+        p = f"/sys/class/drm/{card}/device"
+        if os.path.exists(os.path.join(p, "gpu_busy_percent")):
+            return p
+    return None
+
+# --- Sensor Retrieval Functions ---
+
 def get_cpu_temp():
+    k10 = find_hwmon_dir("k10temp") or find_hwmon_dir("thinkpad")
+    if k10:
+        for t in ["temp1_input", "temp2_input"]:
+            p = os.path.join(k10, t)
+            if os.path.exists(p):
+                try:
+                    with open(p, "r") as f:
+                        val = float(f.read().strip())
+                        return val / 1000.0 if val > 1000 else val
+                except Exception:
+                    pass
     paths = [
-        "/sys/class/hwmon/hwmon6/temp1_input", # Tctl
-        "/sys/class/hwmon/hwmon7/temp1_input", # Thinkpad CPU
         "/sys/class/thermal/thermal_zone0/temp"
     ]
     for p in paths:
         try:
             with open(p, "r") as f:
                 val = float(f.read().strip())
-                if val > 1000:
-                    val /= 1000.0
-                return val
+                return val / 1000.0 if val > 1000 else val
         except Exception:
             continue
     return 0.0
 
 def get_power_usage():
-    try:
-        with open("/sys/class/hwmon/hwmon5/power1_input", "r") as f:
-            return float(f.read().strip()) / 1000000.0
-    except Exception:
-        return 0.0
+    """
+    Retrieves APU / CPU Package Power Draw in Watts.
+    Checks CPU/APU hwmon sensors (amdgpu, k10temp, zenpower, coretemp) and powercap interfaces,
+    excluding battery power supply directories.
+    """
+    if os.path.exists("/sys/class/hwmon"):
+        for d in os.listdir("/sys/class/hwmon"):
+            p_dir = os.path.join("/sys/class/hwmon", d)
+            name_f = os.path.join(p_dir, "name")
+            if os.path.exists(name_f):
+                try:
+                    with open(name_f, "r") as f:
+                        h_name = f.read().strip().lower()
+                    if any(b in h_name for b in ["bat", "acad", "ac_"]):
+                        continue
+                    for pf in ["power1_input", "power1_average", "power2_input", "power2_average"]:
+                        p_path = os.path.join(p_dir, pf)
+                        if os.path.exists(p_path):
+                            with open(p_path, "r") as pf_f:
+                                val = float(pf_f.read().strip())
+                            return val / 1000000.0 if val > 1000 else val
+                except Exception:
+                    pass
+
+    for pc_path in ["/sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw",
+                    "/sys/class/powercap/amd-rapl:0/constraint_0_power_limit_uw"]:
+        if os.path.exists(pc_path):
+            try:
+                with open(pc_path, "r") as f:
+                    val = float(f.read().strip())
+                if val > 0:
+                    return val / 1000000.0
+            except Exception:
+                pass
+
+    return 0.0
 
 def get_fan_speed():
+    tp = find_hwmon_dir("thinkpad")
+    if tp:
+        p = os.path.join(tp, "fan1_input")
+        if os.path.exists(p):
+            try:
+                with open(p, "r") as f:
+                    return float(f.read().strip())
+            except Exception:
+                pass
     try:
-        with open("/sys/class/hwmon/hwmon7/fan1_input", "r") as f:
-            return float(f.read().strip())
+        with open("/proc/acpi/ibm/fan", "r") as f:
+            for line in f:
+                if line.startswith("speed:"):
+                    return float(line.split(":")[1].strip())
     except Exception:
-        return 0.0
+        pass
+    return 0.0
 
 def get_fan_pwm():
-    # Returns the actual RPM percentage based on a max of 3859 RPM
-    # Alternatively returns level string from thinkpad acpi
     try:
         with open("/proc/acpi/ibm/fan", "r") as f:
             for line in f:
                 if line.startswith("level:"):
-                    lvl = line.split(":")[1].strip()
-                    return lvl
+                    return line.split(":")[1].strip()
     except Exception:
         pass
     return "auto"
 
 
 def get_cpu_freqs():
-    # Use psutil.cpu_freq() if available, fallback to sysfs
     try:
         freqs = [f.current for f in psutil.cpu_freq(percpu=True)]
         if freqs:
@@ -77,118 +158,264 @@ def get_cpu_governor():
 
 def get_battery_info():
     info = {"status": "Unknown", "capacity": 0, "voltage": 0.0, "power": 0.0, "tech": "Unknown"}
-    try:
-        if os.path.exists("/sys/class/power_supply/BAT0"):
-            with open("/sys/class/power_supply/BAT0/status", "r") as f:
-                info["status"] = f.read().strip()
-            with open("/sys/class/power_supply/BAT0/capacity", "r") as f:
-                info["capacity"] = int(f.read().strip())
-            with open("/sys/class/power_supply/BAT0/voltage_now", "r") as f:
-                info["voltage"] = float(f.read().strip()) / 1000000.0
-            with open("/sys/class/power_supply/BAT0/technology", "r") as f:
-                info["tech"] = f.read().strip()
+    bat = find_battery_dir()
+    if bat and os.path.exists(bat):
+        try:
+            if os.path.exists(os.path.join(bat, "status")):
+                with open(os.path.join(bat, "status"), "r") as f:
+                    info["status"] = f.read().strip()
+            if os.path.exists(os.path.join(bat, "capacity")):
+                with open(os.path.join(bat, "capacity"), "r") as f:
+                    info["capacity"] = int(f.read().strip())
+            if os.path.exists(os.path.join(bat, "voltage_now")):
+                with open(os.path.join(bat, "voltage_now"), "r") as f:
+                    info["voltage"] = float(f.read().strip()) / 1000000.0
+            if os.path.exists(os.path.join(bat, "technology")):
+                with open(os.path.join(bat, "technology"), "r") as f:
+                    info["tech"] = f.read().strip()
             
-            if os.path.exists("/sys/class/power_supply/BAT0/power_now"):
-                with open("/sys/class/power_supply/BAT0/power_now", "r") as f:
+            if os.path.exists(os.path.join(bat, "power_now")):
+                with open(os.path.join(bat, "power_now"), "r") as f:
                     info["power"] = float(f.read().strip()) / 1000000.0
-            elif os.path.exists("/sys/class/power_supply/BAT0/current_now"):
-                with open("/sys/class/power_supply/BAT0/current_now", "r") as f:
+            elif os.path.exists(os.path.join(bat, "current_now")):
+                with open(os.path.join(bat, "current_now"), "r") as f:
                     curr = float(f.read().strip()) / 1000000.0
                 info["power"] = curr * info["voltage"]
-    except Exception:
-        pass
+        except Exception:
+            pass
     return info
 
 def get_battery_health():
     health_info = {"health": 0.0, "cycles": 0, "mfg": "Unknown", "model": "Unknown"}
-    try:
-        if os.path.exists("/sys/class/power_supply/BAT0"):
-            with open("/sys/class/power_supply/BAT0/energy_full", "r") as f:
-                full = float(f.read().strip())
-            with open("/sys/class/power_supply/BAT0/energy_full_design", "r") as f:
-                design = float(f.read().strip())
-            with open("/sys/class/power_supply/BAT0/cycle_count", "r") as f:
-                health_info["cycles"] = int(f.read().strip())
-            with open("/sys/class/power_supply/BAT0/manufacturer", "r") as f:
-                health_info["mfg"] = f.read().strip()
-            with open("/sys/class/power_supply/BAT0/model_name", "r") as f:
-                health_info["model"] = f.read().strip()
+    bat = find_battery_dir()
+    if bat and os.path.exists(bat):
+        try:
+            full, design = 0.0, 0.0
+            for full_file in ["energy_full", "charge_full"]:
+                p = os.path.join(bat, full_file)
+                if os.path.exists(p):
+                    with open(p, "r") as f:
+                        full = float(f.read().strip())
+                    break
+            for design_file in ["energy_full_design", "charge_full_design"]:
+                p = os.path.join(bat, design_file)
+                if os.path.exists(p):
+                    with open(p, "r") as f:
+                        design = float(f.read().strip())
+                    break
+            if os.path.exists(os.path.join(bat, "cycle_count")):
+                with open(os.path.join(bat, "cycle_count"), "r") as f:
+                    health_info["cycles"] = int(f.read().strip())
+            if os.path.exists(os.path.join(bat, "manufacturer")):
+                with open(os.path.join(bat, "manufacturer"), "r") as f:
+                    health_info["mfg"] = f.read().strip()
+            if os.path.exists(os.path.join(bat, "model_name")):
+                with open(os.path.join(bat, "model_name"), "r") as f:
+                    health_info["model"] = f.read().strip()
             
             health_info["health"] = (full / design) * 100.0 if design > 0 else 0.0
-    except Exception:
-        pass
+        except Exception:
+            pass
     return health_info
 
 def get_charge_thresholds():
     thresholds = {"start": 0, "stop": 100}
-    for p, key in [("charge_start_threshold", "start"), 
-                   ("charge_control_start_threshold", "start"),
-                   ("charge_stop_threshold", "stop"),
-                   ("charge_control_end_threshold", "stop")]:
-        path = f"/sys/class/power_supply/BAT0/{p}"
-        if os.path.exists(path):
-            try:
-                with open(path, "r") as f:
-                    thresholds[key] = int(f.read().strip())
-            except:
-                pass
+    bat = find_battery_dir()
+    if bat:
+        for p, key in [("charge_start_threshold", "start"), 
+                       ("charge_control_start_threshold", "start"),
+                       ("charge_stop_threshold", "stop"),
+                       ("charge_control_end_threshold", "stop")]:
+            path = os.path.join(bat, p)
+            if os.path.exists(path):
+                try:
+                    with open(path, "r") as f:
+                        thresholds[key] = int(f.read().strip())
+                except:
+                    pass
     return thresholds
 
 def get_gpu_info():
     info = {"temp": 0.0, "sclk": 0.0, "vddgfx": 0.0, "vddnb": 0.0, "busy": 0, 
             "vram_used": 0.0, "vram_total": 0.0, "gtt_used": 0.0, "gtt_total": 0.0}
-    try:
-        with open("/sys/class/hwmon/hwmon5/temp1_input", "r") as f:
-            info["temp"] = float(f.read().strip()) / 1000.0
-        with open("/sys/class/hwmon/hwmon5/freq1_input", "r") as f:
-            info["sclk"] = float(f.read().strip()) / 1000000.0
-        with open("/sys/class/hwmon/hwmon5/in0_input", "r") as f:
-            info["vddgfx"] = float(f.read().strip()) / 1000.0
-        with open("/sys/class/hwmon/hwmon5/in1_input", "r") as f:
-            info["vddnb"] = float(f.read().strip()) / 1000.0
-    except Exception:
-        pass
-    try:
-        with open("/sys/class/drm/card1/device/gpu_busy_percent", "r") as f:
-            info["busy"] = int(f.read().strip())
-        with open("/sys/class/drm/card1/device/mem_info_vram_used", "r") as f:
-            info["vram_used"] = float(f.read().strip()) / (1024*1024)
-        with open("/sys/class/drm/card1/device/mem_info_vram_total", "r") as f:
-            info["vram_total"] = float(f.read().strip()) / (1024*1024)
-        with open("/sys/class/drm/card1/device/mem_info_gtt_used", "r") as f:
-            info["gtt_used"] = float(f.read().strip()) / (1024*1024)
-        with open("/sys/class/drm/card1/device/mem_info_gtt_total", "r") as f:
-            info["gtt_total"] = float(f.read().strip()) / (1024*1024)
-    except Exception:
-        pass
+    gpu_hwmon = find_hwmon_dir("amdgpu")
+    if gpu_hwmon:
+        try:
+            if os.path.exists(os.path.join(gpu_hwmon, "temp1_input")):
+                with open(os.path.join(gpu_hwmon, "temp1_input"), "r") as f:
+                    info["temp"] = float(f.read().strip()) / 1000.0
+            if os.path.exists(os.path.join(gpu_hwmon, "freq1_input")):
+                with open(os.path.join(gpu_hwmon, "freq1_input"), "r") as f:
+                    info["sclk"] = float(f.read().strip()) / 1000000.0
+            if os.path.exists(os.path.join(gpu_hwmon, "in0_input")):
+                with open(os.path.join(gpu_hwmon, "in0_input"), "r") as f:
+                    info["vddgfx"] = float(f.read().strip()) / 1000.0
+            if os.path.exists(os.path.join(gpu_hwmon, "in1_input")):
+                with open(os.path.join(gpu_hwmon, "in1_input"), "r") as f:
+                    info["vddnb"] = float(f.read().strip()) / 1000.0
+        except Exception:
+            pass
+    card_dir = find_drm_device_dir()
+    if card_dir:
+        try:
+            if os.path.exists(os.path.join(card_dir, "gpu_busy_percent")):
+                with open(os.path.join(card_dir, "gpu_busy_percent"), "r") as f:
+                    info["busy"] = int(f.read().strip())
+            if os.path.exists(os.path.join(card_dir, "mem_info_vram_used")):
+                with open(os.path.join(card_dir, "mem_info_vram_used"), "r") as f:
+                    info["vram_used"] = float(f.read().strip()) / (1024*1024)
+            if os.path.exists(os.path.join(card_dir, "mem_info_vram_total")):
+                with open(os.path.join(card_dir, "mem_info_vram_total"), "r") as f:
+                    info["vram_total"] = float(f.read().strip()) / (1024*1024)
+            if os.path.exists(os.path.join(card_dir, "mem_info_gtt_used")):
+                with open(os.path.join(card_dir, "mem_info_gtt_used"), "r") as f:
+                    info["gtt_used"] = float(f.read().strip()) / (1024*1024)
+            if os.path.exists(os.path.join(card_dir, "mem_info_gtt_total")):
+                with open(os.path.join(card_dir, "mem_info_gtt_total"), "r") as f:
+                    info["gtt_total"] = float(f.read().strip()) / (1024*1024)
+        except Exception:
+            pass
     return info
+
+def find_all_hwmon_dirs(name):
+    res = []
+    if not os.path.exists("/sys/class/hwmon"):
+        return res
+    for d in os.listdir("/sys/class/hwmon"):
+        path = os.path.join("/sys/class/hwmon", d)
+        name_file = os.path.join(path, "name")
+        if os.path.exists(name_file):
+            try:
+                with open(name_file, "r") as f:
+                    if name.lower() in f.read().strip().lower():
+                        res.append(path)
+            except Exception:
+                pass
+    return res
 
 def get_nvme_details():
-    info = {"temp1": 0.0, "temp2": 0.0, "temp3": 0.0, "crit": 70.0}
+    nvme_list = []
+    hwmons = find_all_hwmon_dirs("nvme")
+    for hw in hwmons:
+        dev_link = os.path.join(hw, "device")
+        dev = "nvme"
+        model = "NVMe SSD"
+        if os.path.exists(dev_link):
+            try:
+                target = os.path.basename(os.readlink(dev_link))
+                dev = target
+                model_path = f"/sys/class/nvme/{target}/model"
+                if os.path.exists(model_path):
+                    with open(model_path, "r") as mf:
+                        model = mf.read().strip()
+            except Exception:
+                pass
+
+        info = {"name": dev, "model": model, "temp1": 0.0, "temp2": 0.0, "temp3": 0.0, "crit": 70.0}
+        for t_idx in [1, 2, 3]:
+            p = os.path.join(hw, f"temp{t_idx}_input")
+            if os.path.exists(p):
+                try:
+                    with open(p, "r") as f:
+                        info[f"temp{t_idx}"] = float(f.read().strip()) / 1000.0
+                except:
+                    pass
+        crit_p = os.path.join(hw, "temp1_crit")
+        if os.path.exists(crit_p):
+            try:
+                with open(crit_p, "r") as f:
+                    info["crit"] = float(f.read().strip()) / 1000.0
+            except:
+                pass
+        nvme_list.append(info)
+    if not nvme_list:
+        nvme_list.append({"name": "nvme0", "model": "NVMe Drive", "temp1": 0.0, "temp2": 0.0, "temp3": 0.0, "crit": 70.0})
+    return nvme_list
+
+def get_system_model():
+    vendor, product, version, bios_ver, bios_date = "", "", "", "", ""
     try:
-        with open("/sys/class/hwmon/hwmon2/temp1_input", "r") as f:
-            info["temp1"] = float(f.read().strip()) / 1000.0
-    except: pass
+        if os.path.exists("/sys/class/dmi/id/sys_vendor"):
+            with open("/sys/class/dmi/id/sys_vendor", "r") as f: vendor = f.read().strip()
+        if os.path.exists("/sys/class/dmi/id/product_name"):
+            with open("/sys/class/dmi/id/product_name", "r") as f: product = f.read().strip()
+        if os.path.exists("/sys/class/dmi/id/product_version"):
+            with open("/sys/class/dmi/id/product_version", "r") as f: version = f.read().strip()
+        if os.path.exists("/sys/class/dmi/id/bios_version"):
+            with open("/sys/class/dmi/id/bios_version", "r") as f: bios_ver = f.read().strip()
+        if os.path.exists("/sys/class/dmi/id/bios_date"):
+            with open("/sys/class/dmi/id/bios_date", "r") as f: bios_date = f.read().strip()
+    except Exception:
+        pass
+    
+    cpu_model = ""
     try:
-        with open("/sys/class/hwmon/hwmon2/temp2_input", "r") as f:
-            info["temp2"] = float(f.read().strip()) / 1000.0
-    except: pass
+        with open("/proc/cpuinfo", "r") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    cpu_model = line.split(":")[1].strip()
+                    break
+    except Exception:
+        pass
+
+    name = version if (version and version.lower() not in ["none", "type1", "invalid", "unknown", ""]) else product
+    if not name:
+        name = "Lenovo Laptop"
+    elif product and product.lower() not in name.lower() and len(product) <= 8:
+        name = f"{name} ({product})"
+
+    return {
+        "vendor": vendor,
+        "model": name,
+        "bios": bios_ver,
+        "bios_date": bios_date,
+        "cpu_model": cpu_model
+    }
+
+def get_cpu_boost_and_epp():
+    boost = "Disabled"
+    epp = "Unknown"
+    boost_path = "/sys/devices/system/cpu/cpufreq/boost"
+    if os.path.exists(boost_path):
+        try:
+            with open(boost_path, "r") as f:
+                boost = "Enabled" if f.read().strip() == "1" else "Disabled"
+        except Exception:
+            pass
+    epp_path = "/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference"
+    if os.path.exists(epp_path):
+        try:
+            with open(epp_path, "r") as f:
+                epp = f.read().strip()
+        except Exception:
+            pass
+    return boost, epp
+
+def get_top_processes():
+    procs = []
     try:
-        with open("/sys/class/hwmon/hwmon2/temp3_input", "r") as f:
-            info["temp3"] = float(f.read().strip()) / 1000.0
-    except: pass
-    try:
-        with open("/sys/class/hwmon/hwmon2/temp1_crit", "r") as f:
-            info["crit"] = float(f.read().strip()) / 1000.0
-    except: pass
-    return info
+        for p in sorted(psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']), key=lambda x: x.info['cpu_percent'] or 0, reverse=True)[:3]:
+            procs.append({
+                "pid": p.info['pid'],
+                "name": p.info['name'][:14],
+                "cpu": p.info['cpu_percent'] or 0.0,
+                "mem": p.info['memory_percent'] or 0.0
+            })
+    except Exception:
+        pass
+    return procs
 
 def get_wifi_temp():
-    try:
-        with open("/sys/class/hwmon/hwmon8/temp1_input", "r") as f:
-            return float(f.read().strip()) / 1000.0
-    except Exception:
-        return 0.0
+    wifi_hwmon = find_hwmon_dir("iwlwifi") or find_hwmon_dir("ath") or find_hwmon_dir("wlan")
+    if wifi_hwmon:
+        p = os.path.join(wifi_hwmon, "temp1_input")
+        if os.path.exists(p):
+            try:
+                with open(p, "r") as f:
+                    return float(f.read().strip()) / 1000.0
+            except Exception:
+                pass
+    return 0.0
 
 def get_usbc_telemetry():
     ports = []
@@ -252,11 +479,15 @@ def get_platform_profile():
         return "Unknown"
 
 def get_ac_status():
-    try:
-        with open("/sys/class/power_supply/AC/online", "r") as f:
-            return "Online" if f.read().strip() == "1" else "Offline"
-    except Exception:
-        return "Unknown"
+    for ac in ["ACAD", "AC", "ADP1", "AC0"]:
+        p = f"/sys/class/power_supply/{ac}/online"
+        if os.path.exists(p):
+            try:
+                with open(p, "r") as f:
+                    return "Online" if f.read().strip() == "1" else "Offline"
+            except Exception:
+                pass
+    return "Unknown"
 
 def get_backlight():
     try:
@@ -284,11 +515,15 @@ def get_bluetooth_status():
     return "Unknown"
 
 def get_gpu_ppt_limit():
-    try:
-        with open("/sys/class/hwmon/hwmon5/power1_cap", "r") as f:
-            return float(f.read().strip()) / 1000000.0
-    except Exception:
-        pass
+    gpu_hwmon = find_hwmon_dir("amdgpu")
+    if gpu_hwmon:
+        p = os.path.join(gpu_hwmon, "power1_cap")
+        if os.path.exists(p):
+            try:
+                with open(p, "r") as f:
+                    return float(f.read().strip()) / 1000000.0
+            except Exception:
+                pass
     return 30.0
 
 # --- State Class for Dynamic Rates ---
@@ -390,19 +625,15 @@ def draw_colored_bar(stdscr, y, x, val, max_val, width=12, has_colors=True, low_
     safe_addstr(stdscr, y, x + 1 + width, "]")
 
 def draw_core_line(stdscr, y, x, core_id, freq, load, has_colors):
-    # Format: C00: 2.1G █░░░░ 24%
     safe_addstr(stdscr, y, x, f"C{core_id:02d}:", curses.color_pair(1) if has_colors else curses.A_NORMAL)
     
-    # Freq
     freq_str = f"{freq/1000.0:.1f}G" if freq >= 1000 else f"{freq:.0f}M"
     safe_addstr(stdscr, y, x + 5, f"{freq_str:>5}")
     
-    # Mini Bar
     bar_width = 5
     fill = int(min(load, 100.0) / 100.0 * bar_width)
     bar_str = "█" * fill + "░" * (bar_width - fill)
     
-    # Color load
     load_attr = curses.A_NORMAL
     if has_colors:
         if load > 85:
@@ -417,14 +648,18 @@ def draw_core_line(stdscr, y, x, core_id, freq, load, has_colors):
 
 # --- Main Dashboard Loop ---
 def monitor(stdscr):
+    stdscr.scrollok(False)
+    stdscr.nodelay(True)
+    stdscr.timeout(1000)
     try:
-        curses.curs_set(0) # Hide cursor
+        curses.curs_set(0)
     except Exception:
         pass
-    stdscr.nodelay(True) # Non-blocking input
-    stdscr.timeout(1000) # Refresh every 1 second
+    try:
+        curses.mousemask(curses.ALL_MOUSE_EVENTS)
+    except Exception:
+        pass
     
-    # Check color support
     has_colors = curses.has_colors()
     if has_colors:
         try:
@@ -453,6 +688,7 @@ def monitor(stdscr):
         # Read stats
         uptime = get_uptime()
         governor = get_cpu_governor()
+        cpu_boost, cpu_epp = get_cpu_boost_and_epp()
         load_1, load_5, load_15 = os.getloadavg()
         
         # Memory
@@ -489,7 +725,7 @@ def monitor(stdscr):
         temp = get_cpu_temp()
         fan = get_fan_speed()
         fan_lvl = get_fan_pwm()
-        nvme = get_nvme_details()
+        nvme_list = get_nvme_details()
         wifi_temp = get_wifi_temp()
         
         # USBC charger
@@ -501,17 +737,21 @@ def monitor(stdscr):
         backlight = get_backlight()
         bluetooth = get_bluetooth_status()
         ppt_limit = get_gpu_ppt_limit()
+        top_procs = get_top_processes()
         
         max_y, max_x = stdscr.getmaxyx()
         
         is_single_col = max_x < 104
         
+        # System & Laptop Model Info
+        sys_model = get_system_model()
+
         # Header Box
         header_w = max_x - 4 if max_x > 4 else 98
         safe_addstr(stdscr, 0, 2, "┌" + "─" * (header_w - 2) + "┐", c_cyan)
         safe_addstr(stdscr, 1, 2, "│", c_cyan)
         
-        title_str = f"THINKPAD L15 GEN 1  |  Uptime: {uptime}  |  Prof: {profile}  |  AC: {ac_status}"
+        title_str = f"{sys_model['model'].upper()}  |  Uptime: {uptime}  |  Profile: {profile}  |  AC: {ac_status}"
         if len(title_str) > header_w - 4:
             title_str = title_str[:max(0, header_w - 4)]
         safe_addstr(stdscr, 1, 4, title_str, c_cyan | c_bold)
@@ -524,67 +764,87 @@ def monitor(stdscr):
         # System Load & Memory
         safe_addstr(stdscr, 4, col_l, "┌─ System Load & Memory ────────────────────────┐", c_cyan | c_bold)
         safe_addstr(stdscr, 5, col_l, f"│ Load Avg: ", c_cyan)
-        safe_addstr(stdscr, 5, col_l + 12, f"{load_1:.2f}, {load_5:.2f}, {load_15:.2f}")
+        safe_addstr(stdscr, 5, col_l + 12, f"{load_1:.2f}, {load_5:.2f}, {load_15:.2f} | Gov: {governor}")
         
-        safe_addstr(stdscr, 6, col_l, f"│ RAM Use:  ", c_cyan)
-        draw_colored_bar(stdscr, 6, col_l + 12, mem.used, mem.total, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 6, col_l + 27, f"{mem_used:.1f}/{mem_total:.1f} GB ({mem.percent:.0f}%)")
-        
-        safe_addstr(stdscr, 7, col_l, f"│ Swap Use: ", c_cyan)
-        draw_colored_bar(stdscr, 7, col_l + 12, swap.used, swap.total, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 7, col_l + 27, f"{swap_used:.1f}/{swap_total:.1f} GB ({swap.percent:.0f}%)")
+        safe_addstr(stdscr, 6, col_l, f"│ CPU Mode: ", c_cyan)
+        safe_addstr(stdscr, 6, col_l + 12, f"Boost: {cpu_boost} | EPP: {cpu_epp}", c_green if cpu_boost=="Enabled" else c_yellow)
 
-        # Storage & Disk I/O
-        safe_addstr(stdscr, 9, col_l, "┌─ Storage & NVMe SSD ──────────────────────────┐", c_cyan | c_bold)
-        safe_addstr(stdscr, 10, col_l, f"│ Disk Root:", c_cyan)
-        draw_colored_bar(stdscr, 10, col_l + 12, disk.used, disk.total, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 10, col_l + 27, f"{disk_used:.1f}/{disk_total:.1f} GB ({disk.percent:.0f}%)")
+        safe_addstr(stdscr, 7, col_l, f"│ RAM Use:  ", c_cyan)
+        draw_colored_bar(stdscr, 7, col_l + 12, mem.used, mem.total, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, 7, col_l + 27, f"{mem_used:.1f}/{mem_total:.1f} GB ({mem.percent:.0f}%)")
         
-        safe_addstr(stdscr, 11, col_l, f"│ I/O Speed:", c_cyan)
-        safe_addstr(stdscr, 11, col_l + 12, f"R: {state.disk_read_rate:5.2f} MB/s", c_green)
-        safe_addstr(stdscr, 11, col_l + 28, f"W: {state.disk_write_rate:5.2f} MB/s", c_yellow)
+        safe_addstr(stdscr, 8, col_l, f"│ Swap Use: ", c_cyan)
+        draw_colored_bar(stdscr, 8, col_l + 12, swap.used, swap.total, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, 8, col_l + 27, f"{swap_used:.1f}/{swap_total:.1f} GB ({swap.percent:.0f}%)")
+
+        # Storage & Dual NVMe SSD
+        safe_addstr(stdscr, 10, col_l, "┌─ Storage & Dual NVMe SSD ─────────────────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, 11, col_l, f"│ Disk Root:", c_cyan)
+        draw_colored_bar(stdscr, 11, col_l + 12, disk.used, disk.total, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, 11, col_l + 27, f"{disk_used:.1f}/{disk_total:.1f} GB ({disk.percent:.0f}%)")
         
-        safe_addstr(stdscr, 12, col_l, f"│ NVMe Temp:", c_cyan)
-        safe_addstr(stdscr, 12, col_l + 12, f"Comp: {nvme['temp1']:.0f}°C | S1: {nvme['temp2']:.0f}°C | S2: {nvme['temp3']:.0f}°C", c_green if nvme['temp1'] < 60 else c_red)
+        safe_addstr(stdscr, 12, col_l, f"│ I/O Speed:", c_cyan)
+        safe_addstr(stdscr, 12, col_l + 12, f"R: {state.disk_read_rate:5.2f} MB/s", c_green)
+        safe_addstr(stdscr, 12, col_l + 28, f"W: {state.disk_write_rate:5.2f} MB/s", c_yellow)
+        
+        line_idx = 13
+        for idx, nvme in enumerate(nvme_list):
+            model_short = nvme.get('model', 'SSD')[:15]
+            safe_addstr(stdscr, line_idx, col_l, f"│ {nvme['name'].upper()}:    ", c_cyan)
+            safe_addstr(stdscr, line_idx, col_l + 12, f"{model_short:<15} | Temp: {nvme['temp1']:.0f}°C", c_green if nvme['temp1'] < 60 else c_red)
+            line_idx += 1
 
         # Network
-        safe_addstr(stdscr, 14, col_l, f"┌─ Network: {active_iface:<7} ({ip}) ──────────┐", c_cyan | c_bold)
-        safe_addstr(stdscr, 15, col_l, f"│ Speed:    ", c_cyan)
-        safe_addstr(stdscr, 15, col_l + 12, f"Down: {state.net_rx_rate:5.2f} MB/s", c_green)
-        safe_addstr(stdscr, 16, col_l, f"│           ", c_cyan)
-        safe_addstr(stdscr, 16, col_l + 12, f"Up:   {state.net_tx_rate:5.2f} MB/s", c_yellow)
-        safe_addstr(stdscr, 17, col_l, f"│ Traffic:  ", c_cyan)
-        safe_addstr(stdscr, 17, col_l + 12, f"Down: {state.total_rx_mb/1024:.1f} GB | Up: {state.total_tx_mb/1024:.1f} GB")
+        safe_addstr(stdscr, 16, col_l, f"┌─ Network: {active_iface:<7} ({ip}) ──────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, 17, col_l, f"│ Speed:    ", c_cyan)
+        safe_addstr(stdscr, 17, col_l + 12, f"Down: {state.net_rx_rate:5.2f} MB/s", c_green)
+        safe_addstr(stdscr, 18, col_l, f"│           ", c_cyan)
+        safe_addstr(stdscr, 18, col_l + 12, f"Up:   {state.net_tx_rate:5.2f} MB/s", c_yellow)
+        safe_addstr(stdscr, 19, col_l, f"│ Traffic:  ", c_cyan)
+        safe_addstr(stdscr, 19, col_l + 12, f"Down: {state.total_rx_mb/1024:.1f} GB | Up: {state.total_tx_mb/1024:.1f} GB")
 
-        # Extra System components
-        safe_addstr(stdscr, 19, col_l, f"│ Extras:   ", c_cyan)
-        safe_addstr(stdscr, 19, col_l + 12, f"BT: {bluetooth} | Display: {backlight:.0f}% brightness")
+        # Top Active Processes
+        safe_addstr(stdscr, 21, col_l, "┌─ Top Active Processes ────────────────────────┐", c_cyan | c_bold)
+        for idx, proc in enumerate(top_procs):
+            safe_addstr(stdscr, 22 + idx, col_l, f"│ P{idx+1}: {proc['name']:<14}", c_cyan)
+            safe_addstr(stdscr, 22 + idx, col_l + 20, f"CPU: {proc['cpu']:5.1f}% | RAM: {proc['mem']:4.1f}%")
 
         # Battery Status & Health
-        safe_addstr(stdscr, 23, col_l, "┌─ Battery & Power Delivery ────────────────────┐", c_cyan | c_bold)
-        safe_addstr(stdscr, 22, col_l, f"│ Status:   ", c_cyan)
-        safe_addstr(stdscr, 22, col_l + 12, f"{bat['status']}")
+        safe_addstr(stdscr, 26, col_l, "┌─ Battery & Power Delivery ────────────────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, 27, col_l, f"│ Status:   ", c_cyan)
+        safe_addstr(stdscr, 27, col_l + 12, f"{bat['status']} (AC: {ac_status})")
         
-        safe_addstr(stdscr, 23, col_l, f"│ Capacity: ", c_cyan)
-        draw_colored_bar(stdscr, 23, col_l + 12, bat['capacity'], 100, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 23, col_l + 27, f"{bat['capacity']}%", c_green if bat['capacity'] > 20 else c_red)
+        safe_addstr(stdscr, 28, col_l, f"│ Capacity: ", c_cyan)
+        draw_colored_bar(stdscr, 28, col_l + 12, bat['capacity'], 100, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, 28, col_l + 27, f"{bat['capacity']}%", c_green if bat['capacity'] > 20 else c_red)
         
-        safe_addstr(stdscr, 24, col_l, f"│ Health:   ", c_cyan)
-        safe_addstr(stdscr, 24, col_l + 12, f"{bat_h['health']:.1f}% ", c_green if bat_h['health'] > 85 else c_yellow)
-        safe_addstr(stdscr, 24, col_l + 21, f"(Cycles: {bat_h['cycles']})")
+        safe_addstr(stdscr, 29, col_l, f"│ Health:   ", c_cyan)
+        safe_addstr(stdscr, 29, col_l + 12, f"{bat_h['health']:.1f}% ", c_green if bat_h['health'] > 85 else c_yellow)
+        safe_addstr(stdscr, 29, col_l + 21, f"(Cycles: {bat_h['cycles']})")
         
-        safe_addstr(stdscr, 25, col_l, f"│ Limits:   ", c_cyan)
-        safe_addstr(stdscr, 25, col_l + 12, f"Thresholds: Start {thresholds['start']}% / Stop {thresholds['stop']}%")
+        safe_addstr(stdscr, 30, col_l, f"│ Limits:   ", c_cyan)
+        safe_addstr(stdscr, 30, col_l + 12, f"Thresholds: Start {thresholds['start']}% / Stop {thresholds['stop']}%")
         
-        safe_addstr(stdscr, 26, col_l, f"│ Specs:    ", c_cyan)
-        safe_addstr(stdscr, 26, col_l + 12, f"{bat_h['mfg']} {bat_h['model']} ({bat['tech']})")
-        
-        safe_addstr(stdscr, 27, col_l, f"│ Power:    ", c_cyan)
-        safe_addstr(stdscr, 27, col_l + 12, f"{bat['voltage']:.2f} V | Draw: {bat['power']:.2f} W", c_yellow)
+        safe_addstr(stdscr, 31, col_l, f"│ Power:    ", c_cyan)
+        status_upper = bat['status'].upper()
+        if "CHARGING" in status_upper and "DIS" not in status_upper:
+            pwr_str = f"Charge: +{bat['power']:.2f} W"
+            pwr_color = c_green
+        elif "DISCHARGING" in status_upper:
+            pwr_str = f"Draw: -{bat['power']:.2f} W" if bat['power'] > 0 else f"Draw: {bat['power']:.2f} W"
+            pwr_color = c_yellow
+        elif "FULL" in status_upper or "NOT CHARGING" in status_upper:
+            pwr_str = f"Idle: {bat['power']:.2f} W"
+            pwr_color = c_cyan
+        else:
+            pwr_str = f"Rate: {bat['power']:.2f} W"
+            pwr_color = c_yellow
+
+        safe_addstr(stdscr, 31, col_l + 12, f"{bat['voltage']:.2f} V | {pwr_str}", pwr_color)
 
         # ==================== RIGHT COLUMN ====================
         col_r = 2 if is_single_col else max(52, max_x // 2)
-        ro = 24 if is_single_col else 0
+        ro = 28 if is_single_col else 0
         
         # APU Power & GPU
         safe_addstr(stdscr, 4 + ro, col_r, "┌─ APU Power & GPU Status ──────────────────────┐", c_cyan | c_bold)
@@ -613,15 +873,12 @@ def monitor(stdscr):
         # CPU Frequencies & Loads
         safe_addstr(stdscr, 12 + ro, col_r, "┌─ CPU Core Telemetry (Freq & Load) ────────────┐", c_cyan | c_bold)
         for i in range(6):
-            # Left Core
             load_l = loads[i] if i < len(loads) else 0.0
             freq_l = freqs[i] if i < len(freqs) else 0.0
             draw_core_line(stdscr, 13 + i + ro, col_r + 2, i, freq_l, load_l, has_colors)
             
-            # Divider
             safe_addstr(stdscr, 13 + i + ro, col_r + 24, "│", c_cyan)
             
-            # Right Core
             load_r_val = loads[i+6] if (i+6) < len(loads) else 0.0
             freq_r_val = freqs[i+6] if (i+6) < len(freqs) else 0.0
             draw_core_line(stdscr, 13 + i + ro, col_r + 26, i+6, freq_r_val, load_r_val, has_colors)
@@ -652,14 +909,19 @@ def monitor(stdscr):
                 safe_addstr(stdscr, 26 + idx + ro, col_r, f"│ Port {port_num}: ", c_cyan)
                 safe_addstr(stdscr, 26 + idx + ro, col_r + 10, f"Offline", curses.A_DIM)
                 
-        quit_y = max_y - 1 if max_y > 30 else (29 + ro)
+        quit_y = max_y - 1 if max_y > 33 else (33 + ro)
         safe_addstr(stdscr, quit_y, 2, "Press 'q' to quit monitor dashboard.", curses.A_DIM)
         stdscr.refresh()
         
         try:
-            key = stdscr.getkey()
-            if key == 'q':
+            ch = stdscr.getch()
+            if ch in (ord('q'), ord('Q')):
                 break
+            elif ch == curses.KEY_MOUSE:
+                try:
+                    curses.getmouse()
+                except Exception:
+                    pass
         except Exception:
             pass
 
