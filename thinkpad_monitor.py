@@ -38,6 +38,31 @@ def find_drm_device_dir():
             return p
     return None
 
+def parse_dpm_level(path):
+    """Parse an amdgpu pp_dpm_* file; return (cur_level_idx, num_levels, cur_mhz) or None.
+
+    The active DPM state is marked with '*':  '1: 400Mhz *' -> (1, 3, 400.0)
+    """
+    try:
+        with open(path, "r") as f:
+            lines = f.readlines()
+        num, cur, cur_mhz = 0, None, 0.0
+        for line in lines:
+            if ":" not in line:
+                continue
+            num += 1
+            if "*" in line:
+                try:
+                    cur = int(line.split(":")[0].strip())
+                    cur_mhz = float(line.split(":")[1].split("M")[0].strip())
+                except Exception:
+                    cur, cur_mhz = num - 1, 0.0
+        if cur is None:
+            return None
+        return (cur, num, cur_mhz)
+    except Exception:
+        return None
+
 # --- Sensor Retrieval Functions ---
 
 def get_cpu_temp():
@@ -157,7 +182,8 @@ def get_cpu_governor():
         return "Unknown"
 
 def get_battery_info():
-    info = {"status": "Unknown", "capacity": 0, "voltage": 0.0, "power": 0.0, "tech": "Unknown"}
+    info = {"status": "Unknown", "capacity": 0, "voltage": 0.0, "power": 0.0, "tech": "Unknown",
+            "capacity_level": "", "charge_type": ""}
     bat = find_battery_dir()
     if bat and os.path.exists(bat):
         try:
@@ -173,6 +199,16 @@ def get_battery_info():
             if os.path.exists(os.path.join(bat, "technology")):
                 with open(os.path.join(bat, "technology"), "r") as f:
                     info["tech"] = f.read().strip()
+            if os.path.exists(os.path.join(bat, "capacity_level")):
+                with open(os.path.join(bat, "capacity_level"), "r") as f:
+                    info["capacity_level"] = f.read().strip()
+            if os.path.exists(os.path.join(bat, "charge_types")):
+                with open(os.path.join(bat, "charge_types"), "r") as f:
+                    raw = f.read().strip()
+                if "[" in raw and "]" in raw:
+                    info["charge_type"] = raw[raw.index("[") + 1:raw.index("]")]
+                else:
+                    info["charge_type"] = raw.split()[0] if raw else ""
             
             if os.path.exists(os.path.join(bat, "power_now")):
                 with open(os.path.join(bat, "power_now"), "r") as f:
@@ -237,7 +273,9 @@ def get_charge_thresholds():
 
 def get_gpu_info():
     info = {"temp": 0.0, "sclk": 0.0, "vddgfx": 0.0, "vddnb": 0.0, "busy": 0, 
-            "vram_used": 0.0, "vram_total": 0.0, "gtt_used": 0.0, "gtt_total": 0.0}
+            "vram_used": 0.0, "vram_total": 0.0, "gtt_used": 0.0, "gtt_total": 0.0,
+            "perf_level": "n/a", "vis_used": 0.0, "vis_total": 0.0, "preempt_used": 0.0,
+            "dpm_sclk": None, "dpm_mclk": None, "dpm_fclk": None}
     gpu_hwmon = find_hwmon_dir("amdgpu")
     if gpu_hwmon:
         try:
@@ -273,6 +311,21 @@ def get_gpu_info():
             if os.path.exists(os.path.join(card_dir, "mem_info_gtt_total")):
                 with open(os.path.join(card_dir, "mem_info_gtt_total"), "r") as f:
                     info["gtt_total"] = float(f.read().strip()) / (1024*1024)
+            perf_p = os.path.join(card_dir, "power_dpm_force_performance_level")
+            if os.path.exists(perf_p):
+                with open(perf_p, "r") as f:
+                    info["perf_level"] = f.read().strip()
+            for key, fname in [("vis_used", "mem_info_vis_vram_used"),
+                               ("vis_total", "mem_info_vis_vram_total"),
+                               ("preempt_used", "mem_info_preempt_used")]:
+                p = os.path.join(card_dir, fname)
+                if os.path.exists(p):
+                    with open(p, "r") as f:
+                        info[key] = float(f.read().strip()) / (1024*1024)
+            for key, fname in [("dpm_sclk", "pp_dpm_sclk"),
+                               ("dpm_mclk", "pp_dpm_mclk"),
+                               ("dpm_fclk", "pp_dpm_fclk")]:
+                info[key] = parse_dpm_level(os.path.join(card_dir, fname))
         except Exception:
             pass
     return info
@@ -399,6 +452,16 @@ def get_cpu_scaling_driver():
         except Exception:
             pass
     return "Unknown"
+
+def get_pstate_mode():
+    """AMD pstate operating mode: active | guided | passive (or n/a)."""
+    p = "/sys/devices/system/cpu/amd_pstate/status"
+    if os.path.exists(p):
+        try:
+            return open(p).read().strip()
+        except Exception:
+            pass
+    return "n/a"
 
 def get_ram_cache_info():
     try:
@@ -754,11 +817,19 @@ def monitor(stdscr):
     if has_colors:
         try:
             curses.start_color()
-            curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)   # System Info / Header / Borders
-            curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)  # Normal/OK states
-            curses.init_pair(3, curses.COLOR_RED, curses.COLOR_BLACK)    # Alert/Thermal states
-            curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLACK) # Power/Warning states
-            curses.init_pair(5, curses.COLOR_MAGENTA, curses.COLOR_BLACK)# GPU / Special states
+            curses.use_default_colors()
+            if curses.COLORS >= 256:
+                curses.init_pair(1, 179, -1)   # Warm Khaki (System Info / Header / Borders)
+                curses.init_pair(2, 40, -1)    # Normal/OK (Emerald Green)
+                curses.init_pair(3, 203, -1)   # Alert/Thermal (Coral Red)
+                curses.init_pair(4, 215, -1)   # Power/Warning (Warm Sand)
+                curses.init_pair(5, 223, -1)   # Soft Peach (GPU / Special Accent)
+            else:
+                curses.init_pair(1, curses.COLOR_YELLOW, curses.COLOR_BLACK)   # System Info / Header / Borders
+                curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)  # Normal/OK states
+                curses.init_pair(3, curses.COLOR_RED, curses.COLOR_BLACK)    # Alert/Thermal states
+                curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLACK) # Power/Warning states
+                curses.init_pair(5, curses.COLOR_MAGENTA, curses.COLOR_BLACK)# GPU / Special states
         except Exception:
             has_colors = False
             
@@ -854,11 +925,15 @@ def monitor(stdscr):
         # System Load & Memory
         brightness_pct = get_backlight_percent()
         scaling_driver = get_cpu_scaling_driver()
+        pstate = get_pstate_mode()
         cached_ram, _ = get_ram_cache_info()
         
         safe_addstr(stdscr, 4, col_l, "┌─ System Load & Memory ────────────────────────┐", c_cyan | c_bold)
         safe_addstr(stdscr, 5, col_l, f"│ Load Avg: ", c_cyan)
-        safe_addstr(stdscr, 5, col_l + 12, f"{load_1:.2f}, {load_5:.2f}, {load_15:.2f} | Drv: {scaling_driver}")
+        drv_str = f"Drv: {scaling_driver}"
+        if pstate != "n/a":
+            drv_str += f" ({pstate})"
+        safe_addstr(stdscr, 5, col_l + 12, f"{load_1:.2f}, {load_5:.2f}, {load_15:.2f} | {drv_str}")
         
         safe_addstr(stdscr, 6, col_l, f"│ CPU Mode: ", c_cyan)
         safe_addstr(stdscr, 6, col_l + 12, f"Boost: {cpu_boost} | EPP: {cpu_epp} | Screen: {brightness_pct}%", c_green if cpu_boost=="Enabled" else c_yellow)
@@ -886,8 +961,15 @@ def monitor(stdscr):
             model_short = nvme.get('model', 'SSD')[:11]
             ctrl_t = nvme.get('temp1', 0.0)
             flash_t = nvme.get('temp3', nvme.get('temp2', ctrl_t))
+            crit = nvme.get('crit', 0.0)
+            if crit > 0:
+                temp_attr = c_red if ctrl_t >= crit - 10 else (c_yellow if ctrl_t >= crit - 20 else c_green)
+                crit_str = f"/{crit:.0f}c"
+            else:
+                temp_attr = c_red if ctrl_t > 75 else c_green
+                crit_str = ""
             safe_addstr(stdscr, line_idx, col_l, f"│ {nvme['name'].upper()}:    ", c_cyan)
-            safe_addstr(stdscr, line_idx, col_l + 12, f"{model_short:<11} | Ctrl:{ctrl_t:.0f}°C Flash:{flash_t:.0f}°C", c_green if ctrl_t < 60 else c_red)
+            safe_addstr(stdscr, line_idx, col_l + 12, f"{model_short:<11} | Ctrl:{ctrl_t:.0f}°C{crit_str} Flash:{flash_t:.0f}°C", temp_attr)
             line_idx += 1
 
         # Network
@@ -911,7 +993,8 @@ def monitor(stdscr):
         bat_wh = get_battery_time_and_wh()
         safe_addstr(stdscr, 26, col_l, "┌─ Battery & Power Delivery ────────────────────┐", c_cyan | c_bold)
         safe_addstr(stdscr, 27, col_l, f"│ Status:   ", c_cyan)
-        safe_addstr(stdscr, 27, col_l + 12, f"{bat['status']} (AC: {ac_status})")
+        lvl_str = f", Lvl: {bat['capacity_level']}" if bat['capacity_level'] else ""
+        safe_addstr(stdscr, 27, col_l + 12, f"{bat['status']} (AC: {ac_status}{lvl_str})")
         
         safe_addstr(stdscr, 28, col_l, f"│ Capacity: ", c_cyan)
         draw_colored_bar(stdscr, 28, col_l + 12, bat['capacity'], 100, width=12, has_colors=has_colors)
@@ -919,7 +1002,8 @@ def monitor(stdscr):
         
         safe_addstr(stdscr, 29, col_l, f"│ Health:   ", c_cyan)
         safe_addstr(stdscr, 29, col_l + 12, f"{bat_h['health']:.1f}% ", c_green if bat_h['health'] > 85 else c_yellow)
-        safe_addstr(stdscr, 29, col_l + 21, f"(Cycles: {bat_h['cycles']})")
+        type_str = f" | {bat['charge_type']}" if bat['charge_type'] else ""
+        safe_addstr(stdscr, 29, col_l + 21, f"(Cycles: {bat_h['cycles']}){type_str}")
         
         safe_addstr(stdscr, 30, col_l, f"│ Limits:   ", c_cyan)
         safe_addstr(stdscr, 30, col_l + 12, f"Thresholds: Start {thresholds['start']}% / Stop {thresholds['stop']}%")
@@ -967,50 +1051,59 @@ def monitor(stdscr):
         safe_addstr(stdscr, 8 + ro, col_r + 27, f"{gpu['gtt_used']:.0f}/{gpu['gtt_total']:.0f} MB")
         
         safe_addstr(stdscr, 9 + ro, col_r, f"│ GPU Core: ", c_cyan)
-        safe_addstr(stdscr, 9 + ro, col_r + 12, f"{gpu['sclk']:.0f} MHz | Temp: {gpu['temp']:.1f} °C", c_magenta)
+        safe_addstr(stdscr, 9 + ro, col_r + 12, f"{gpu['sclk']:.0f} MHz | Temp: {gpu['temp']:.1f} °C | Perf: {gpu['perf_level']}", c_magenta)
         
         safe_addstr(stdscr, 10 + ro, col_r, f"│ GPU Volt: ", c_cyan)
         safe_addstr(stdscr, 10 + ro, col_r + 12, f"GFX: {gpu['vddgfx']:.3f}V | NB: {gpu['vddnb']:.3f}V")
         
+        safe_addstr(stdscr, 11 + ro, col_r, f"│ GPU DPM:  ", c_cyan)
+        dpm_parts = []
+        for label, dpm in [("GFX", gpu['dpm_sclk']), ("MEM", gpu['dpm_mclk']), ("FCLK", gpu['dpm_fclk'])]:
+            if dpm is None:
+                dpm_parts.append(f"{label} n/a")
+            else:
+                dpm_parts.append(f"{label} L{dpm[0] + 1}/{dpm[1]}")
+        safe_addstr(stdscr, 11 + ro, col_r + 12, " | ".join(dpm_parts), c_magenta)
+        
         # CPU Frequencies & Loads
-        safe_addstr(stdscr, 12 + ro, col_r, "┌─ CPU Core Telemetry (Freq & Load) ────────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, 13 + ro, col_r, "┌─ CPU Core Telemetry (Freq & Load) ────────────┐", c_cyan | c_bold)
         for i in range(6):
             load_l = loads[i] if i < len(loads) else 0.0
             freq_l = freqs[i] if i < len(freqs) else 0.0
-            draw_core_line(stdscr, 13 + i + ro, col_r + 2, i, freq_l, load_l, has_colors)
+            draw_core_line(stdscr, 14 + i + ro, col_r + 2, i, freq_l, load_l, has_colors)
             
-            safe_addstr(stdscr, 13 + i + ro, col_r + 24, "│", c_cyan)
+            safe_addstr(stdscr, 14 + i + ro, col_r + 24, "│", c_cyan)
             
             load_r_val = loads[i+6] if (i+6) < len(loads) else 0.0
             freq_r_val = freqs[i+6] if (i+6) < len(freqs) else 0.0
-            draw_core_line(stdscr, 13 + i + ro, col_r + 26, i+6, freq_r_val, load_r_val, has_colors)
+            draw_core_line(stdscr, 14 + i + ro, col_r + 26, i+6, freq_r_val, load_r_val, has_colors)
 
         # Thermals & Cooling
         tj_margin = max(0.0, 105.0 - temp)
-        safe_addstr(stdscr, 20 + ro, col_r, "┌─ Thermals & Cooling Headroom ─────────────────┐", c_cyan | c_bold)
-        safe_addstr(stdscr, 21 + ro, col_r, f"│ CPU Temp: ", c_cyan)
-        draw_colored_bar(stdscr, 21 + ro, col_r + 12, temp, 95.0, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 21 + ro, col_r + 27, f"{temp:.1f} °C (Margin: +{tj_margin:.1f}°C)", c_red if temp > 75 else c_green)
+        safe_addstr(stdscr, 21 + ro, col_r, "┌─ Thermals & Cooling Headroom ─────────────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, 22 + ro, col_r, f"│ CPU Temp: ", c_cyan)
+        draw_colored_bar(stdscr, 22 + ro, col_r + 12, temp, 95.0, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, 22 + ro, col_r + 27, f"{temp:.1f} °C (Margin: +{tj_margin:.1f}°C)", c_red if temp > 75 else c_green)
         
-        safe_addstr(stdscr, 22 + ro, col_r, f"│ Fan Spd:  ", c_cyan)
-        draw_colored_bar(stdscr, 22 + ro, col_r + 12, fan, 3859.0, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 22 + ro, col_r + 27, f"{fan:.0f} RPM (Lvl: {fan_lvl})", c_magenta)
+        safe_addstr(stdscr, 23 + ro, col_r, f"│ Fan Spd:  ", c_cyan)
+        draw_colored_bar(stdscr, 23 + ro, col_r + 12, fan, 3859.0, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, 23 + ro, col_r + 27, f"{fan:.0f} RPM (Lvl: {fan_lvl})", c_magenta)
         
-        safe_addstr(stdscr, 23 + ro, col_r, f"│ Aux Temp: ", c_cyan)
-        safe_addstr(stdscr, 23 + ro, col_r + 12, f"ThinkPad Sensor: {temp:.1f}°C | Wi-Fi: {wifi_temp:.1f}°C", c_green)
+        safe_addstr(stdscr, 24 + ro, col_r, f"│ Aux Temp: ", c_cyan)
+        safe_addstr(stdscr, 24 + ro, col_r + 12, f"ThinkPad Sensor: {temp:.1f}°C | Wi-Fi: {wifi_temp:.1f}°C", c_green)
 
         # USB-C Charger
-        safe_addstr(stdscr, 25 + ro, col_r, "┌─ USB-C Charger Ports ─────────────────────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, 26 + ro, col_r, "┌─ USB-C Charger Ports ─────────────────────────┐", c_cyan | c_bold)
         for idx, p in enumerate(usbc):
             port_num = idx + 1
             if p["online"] == 1:
                 p_watts = p["v_max"] * p["c_max"]
                 live_w = p["v_now"] * p["c_now"]
-                safe_addstr(stdscr, 26 + idx + ro, col_r, f"│ Port {port_num}: ", c_cyan)
-                safe_addstr(stdscr, 26 + idx + ro, col_r + 10, f"PD Contract: {live_w:.1f}W ({p['v_now']:.1f}V @ {p['c_now']:.1f}A)", c_green)
+                safe_addstr(stdscr, 27 + idx + ro, col_r, f"│ Port {port_num}: ", c_cyan)
+                safe_addstr(stdscr, 27 + idx + ro, col_r + 10, f"PD Contract: {live_w:.1f}W ({p['v_now']:.1f}V @ {p['c_now']:.1f}A)", c_green)
             else:
-                safe_addstr(stdscr, 26 + idx + ro, col_r, f"│ Port {port_num}: ", c_cyan)
-                safe_addstr(stdscr, 26 + idx + ro, col_r + 10, f"Offline", curses.A_DIM)
+                safe_addstr(stdscr, 27 + idx + ro, col_r, f"│ Port {port_num}: ", c_cyan)
+                safe_addstr(stdscr, 27 + idx + ro, col_r + 10, f"Offline", curses.A_DIM)
                 
         quit_y = max_y - 1 if max_y > 33 else (33 + ro)
         safe_addstr(stdscr, quit_y, 2, "Press 'q' to quit monitor dashboard.", curses.A_DIM)
