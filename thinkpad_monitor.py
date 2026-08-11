@@ -391,6 +391,24 @@ def get_cpu_boost_and_epp():
             pass
     return boost, epp
 
+def get_cpu_scaling_driver():
+    p = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver"
+    if os.path.exists(p):
+        try:
+            return open(p).read().strip()
+        except Exception:
+            pass
+    return "Unknown"
+
+def get_ram_cache_info():
+    try:
+        mem = psutil.virtual_memory()
+        cached = getattr(mem, "cached", 0.0) / (1024**3)
+        buffers = getattr(mem, "buffers", 0.0) / (1024**3)
+        return cached, buffers
+    except Exception:
+        return 0.0, 0.0
+
 def get_battery_time_and_wh():
     res = {"energy_now_wh": 0.0, "energy_full_wh": 0.0, "energy_design_wh": 0.0, "time_str": "N/A"}
     bat = None
@@ -835,16 +853,19 @@ def monitor(stdscr):
         
         # System Load & Memory
         brightness_pct = get_backlight_percent()
+        scaling_driver = get_cpu_scaling_driver()
+        cached_ram, _ = get_ram_cache_info()
+        
         safe_addstr(stdscr, 4, col_l, "┌─ System Load & Memory ────────────────────────┐", c_cyan | c_bold)
         safe_addstr(stdscr, 5, col_l, f"│ Load Avg: ", c_cyan)
-        safe_addstr(stdscr, 5, col_l + 12, f"{load_1:.2f}, {load_5:.2f}, {load_15:.2f} | Gov: {governor}")
+        safe_addstr(stdscr, 5, col_l + 12, f"{load_1:.2f}, {load_5:.2f}, {load_15:.2f} | Drv: {scaling_driver}")
         
         safe_addstr(stdscr, 6, col_l, f"│ CPU Mode: ", c_cyan)
         safe_addstr(stdscr, 6, col_l + 12, f"Boost: {cpu_boost} | EPP: {cpu_epp} | Screen: {brightness_pct}%", c_green if cpu_boost=="Enabled" else c_yellow)
 
         safe_addstr(stdscr, 7, col_l, f"│ RAM Use:  ", c_cyan)
         draw_colored_bar(stdscr, 7, col_l + 12, mem.used, mem.total, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 7, col_l + 27, f"{mem_used:.1f}/{mem_total:.1f} GB ({mem.percent:.0f}%)")
+        safe_addstr(stdscr, 7, col_l + 27, f"{mem_used:.1f}/{mem_total:.1f}G (Cache: {cached_ram:.1f}G)")
         
         safe_addstr(stdscr, 8, col_l, f"│ Swap Use: ", c_cyan)
         draw_colored_bar(stdscr, 8, col_l + 12, swap.used, swap.total, width=12, has_colors=has_colors)
@@ -862,9 +883,11 @@ def monitor(stdscr):
         
         line_idx = 13
         for idx, nvme in enumerate(nvme_list):
-            model_short = nvme.get('model', 'SSD')[:15]
+            model_short = nvme.get('model', 'SSD')[:11]
+            ctrl_t = nvme.get('temp1', 0.0)
+            flash_t = nvme.get('temp3', nvme.get('temp2', ctrl_t))
             safe_addstr(stdscr, line_idx, col_l, f"│ {nvme['name'].upper()}:    ", c_cyan)
-            safe_addstr(stdscr, line_idx, col_l + 12, f"{model_short:<15} | Temp: {nvme['temp1']:.0f}°C", c_green if nvme['temp1'] < 60 else c_red)
+            safe_addstr(stdscr, line_idx, col_l + 12, f"{model_short:<11} | Ctrl:{ctrl_t:.0f}°C Flash:{flash_t:.0f}°C", c_green if ctrl_t < 60 else c_red)
             line_idx += 1
 
         # Network
@@ -963,10 +986,11 @@ def monitor(stdscr):
             draw_core_line(stdscr, 13 + i + ro, col_r + 26, i+6, freq_r_val, load_r_val, has_colors)
 
         # Thermals & Cooling
-        safe_addstr(stdscr, 20 + ro, col_r, "┌─ Thermals & Fan Speed ────────────────────────┐", c_cyan | c_bold)
+        tj_margin = max(0.0, 105.0 - temp)
+        safe_addstr(stdscr, 20 + ro, col_r, "┌─ Thermals & Cooling Headroom ─────────────────┐", c_cyan | c_bold)
         safe_addstr(stdscr, 21 + ro, col_r, f"│ CPU Temp: ", c_cyan)
         draw_colored_bar(stdscr, 21 + ro, col_r + 12, temp, 95.0, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 21 + ro, col_r + 27, f"{temp:.1f} °C", c_red if temp > 75 else c_green)
+        safe_addstr(stdscr, 21 + ro, col_r + 27, f"{temp:.1f} °C (Margin: +{tj_margin:.1f}°C)", c_red if temp > 75 else c_green)
         
         safe_addstr(stdscr, 22 + ro, col_r, f"│ Fan Spd:  ", c_cyan)
         draw_colored_bar(stdscr, 22 + ro, col_r + 12, fan, 3859.0, width=12, has_colors=has_colors)
