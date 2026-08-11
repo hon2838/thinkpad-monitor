@@ -391,6 +391,78 @@ def get_cpu_boost_and_epp():
             pass
     return boost, epp
 
+def get_battery_time_and_wh():
+    res = {"energy_now_wh": 0.0, "energy_full_wh": 0.0, "energy_design_wh": 0.0, "time_str": "N/A"}
+    bat = None
+    for b in ["BAT1", "BAT0"]:
+        if os.path.exists(f"/sys/class/power_supply/{b}"):
+            bat = f"/sys/class/power_supply/{b}"
+            break
+    if bat:
+        try:
+            status = "Unknown"
+            if os.path.exists(f"{bat}/status"):
+                status = open(f"{bat}/status").read().strip()
+                
+            e_now, e_full, e_design, p_now = 0.0, 0.0, 0.0, 0.0
+            if os.path.exists(f"{bat}/energy_now"):
+                e_now = float(open(f"{bat}/energy_now").read().strip()) / 1000000.0
+            if os.path.exists(f"{bat}/energy_full"):
+                e_full = float(open(f"{bat}/energy_full").read().strip()) / 1000000.0
+            if os.path.exists(f"{bat}/energy_full_design"):
+                e_design = float(open(f"{bat}/energy_full_design").read().strip()) / 1000000.0
+            if os.path.exists(f"{bat}/power_now"):
+                p_now = float(open(f"{bat}/power_now").read().strip()) / 1000000.0
+                
+            res["energy_now_wh"] = e_now
+            res["energy_full_wh"] = e_full
+            res["energy_design_wh"] = e_design
+            
+            if status == "Discharging" and p_now > 0.1:
+                hrs = e_now / p_now
+                h, m = int(hrs), int((hrs % 1) * 60)
+                res["time_str"] = f"{h}h {m:02d}m left"
+            elif status == "Charging" and p_now > 0.1 and e_full > e_now:
+                hrs = (e_full - e_now) / p_now
+                h, m = int(hrs), int((hrs % 1) * 60)
+                res["time_str"] = f"{h}h {m:02d}m to full"
+            elif status in ["Full", "Not charging"]:
+                res["time_str"] = "Fully Charged"
+        except Exception:
+            pass
+    return res
+
+def get_wifi_details():
+    import subprocess
+    res = {"ssid": "Disconnected", "signal": 0, "freq": "", "rate": ""}
+    try:
+        out = subprocess.check_output(["nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL,FREQ,RATE", "dev", "wifi"], text=True, stderr=subprocess.DEVNULL)
+        for line in out.strip().split("\n"):
+            if line.startswith("yes:"):
+                parts = line.split(":")
+                if len(parts) >= 5:
+                    res["ssid"] = parts[1]
+                    res["signal"] = int(parts[2]) if parts[2].isdigit() else 0
+                    res["freq"] = parts[3]
+                    res["rate"] = parts[4]
+                break
+    except Exception:
+        pass
+    return res
+
+def get_backlight_percent():
+    try:
+        import glob
+        paths = glob.glob("/sys/class/backlight/*/brightness")
+        if paths:
+            base = os.path.dirname(paths[0])
+            cur = float(open(os.path.join(base, "actual_brightness")).read().strip())
+            mx = float(open(os.path.join(base, "max_brightness")).read().strip())
+            return int((cur / mx) * 100.0)
+    except Exception:
+        pass
+    return 0
+
 def get_top_processes():
     procs = []
     try:
@@ -762,12 +834,13 @@ def monitor(stdscr):
         col_l = 2
         
         # System Load & Memory
+        brightness_pct = get_backlight_percent()
         safe_addstr(stdscr, 4, col_l, "┌─ System Load & Memory ────────────────────────┐", c_cyan | c_bold)
         safe_addstr(stdscr, 5, col_l, f"│ Load Avg: ", c_cyan)
         safe_addstr(stdscr, 5, col_l + 12, f"{load_1:.2f}, {load_5:.2f}, {load_15:.2f} | Gov: {governor}")
         
         safe_addstr(stdscr, 6, col_l, f"│ CPU Mode: ", c_cyan)
-        safe_addstr(stdscr, 6, col_l + 12, f"Boost: {cpu_boost} | EPP: {cpu_epp}", c_green if cpu_boost=="Enabled" else c_yellow)
+        safe_addstr(stdscr, 6, col_l + 12, f"Boost: {cpu_boost} | EPP: {cpu_epp} | Screen: {brightness_pct}%", c_green if cpu_boost=="Enabled" else c_yellow)
 
         safe_addstr(stdscr, 7, col_l, f"│ RAM Use:  ", c_cyan)
         draw_colored_bar(stdscr, 7, col_l + 12, mem.used, mem.total, width=12, has_colors=has_colors)
@@ -795,11 +868,13 @@ def monitor(stdscr):
             line_idx += 1
 
         # Network
+        wifi_info = get_wifi_details()
         safe_addstr(stdscr, 16, col_l, f"┌─ Network: {active_iface:<7} ({ip}) ──────────┐", c_cyan | c_bold)
         safe_addstr(stdscr, 17, col_l, f"│ Speed:    ", c_cyan)
-        safe_addstr(stdscr, 17, col_l + 12, f"Down: {state.net_rx_rate:5.2f} MB/s", c_green)
-        safe_addstr(stdscr, 18, col_l, f"│           ", c_cyan)
-        safe_addstr(stdscr, 18, col_l + 12, f"Up:   {state.net_tx_rate:5.2f} MB/s", c_yellow)
+        safe_addstr(stdscr, 17, col_l + 12, f"Down: {state.net_rx_rate:5.2f} MB/s | Up: {state.net_tx_rate:5.2f} MB/s", c_green)
+        safe_addstr(stdscr, 18, col_l, f"│ Wi-Fi 6:  ", c_cyan)
+        wifi_str = f"{wifi_info['ssid']} ({wifi_info['signal']}%) | {wifi_info['rate']}" if wifi_info['ssid'] != "Disconnected" else "Disconnected"
+        safe_addstr(stdscr, 18, col_l + 12, f"{wifi_str}", c_magenta if wifi_info['ssid'] != "Disconnected" else c_yellow)
         safe_addstr(stdscr, 19, col_l, f"│ Traffic:  ", c_cyan)
         safe_addstr(stdscr, 19, col_l + 12, f"Down: {state.total_rx_mb/1024:.1f} GB | Up: {state.total_tx_mb/1024:.1f} GB")
 
@@ -810,6 +885,7 @@ def monitor(stdscr):
             safe_addstr(stdscr, 22 + idx, col_l + 20, f"CPU: {proc['cpu']:5.1f}% | RAM: {proc['mem']:4.1f}%")
 
         # Battery Status & Health
+        bat_wh = get_battery_time_and_wh()
         safe_addstr(stdscr, 26, col_l, "┌─ Battery & Power Delivery ────────────────────┐", c_cyan | c_bold)
         safe_addstr(stdscr, 27, col_l, f"│ Status:   ", c_cyan)
         safe_addstr(stdscr, 27, col_l + 12, f"{bat['status']} (AC: {ac_status})")
@@ -841,6 +917,9 @@ def monitor(stdscr):
             pwr_color = c_yellow
 
         safe_addstr(stdscr, 31, col_l + 12, f"{bat['voltage']:.2f} V | {pwr_str}", pwr_color)
+
+        safe_addstr(stdscr, 32, col_l, f"│ Time/Cap: ", c_cyan)
+        safe_addstr(stdscr, 32, col_l + 12, f"{bat_wh['time_str']} | {bat_wh['energy_now_wh']:.1f}/{bat_wh['energy_full_wh']:.1f} Wh", c_green)
 
         # ==================== RIGHT COLUMN ====================
         col_r = 2 if is_single_col else max(52, max_x // 2)
