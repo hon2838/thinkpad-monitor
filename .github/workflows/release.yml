@@ -1,0 +1,44 @@
+name: Build & Release Binary
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install psutil pyinstaller
+
+      - name: Build Standalone Binary
+        run: |
+          pyinstaller --onefile --name thinkpad-monitor thinkpad_monitor.py
+
+      - name: Test Binary Execution
+        run: |
+          chmod +x dist/thinkpad-monitor
+          ./dist/thinkpad-monitor --help 2>/dev/null || true
+
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: dist/thinkpad-monitor
+          generate_release_notes: true

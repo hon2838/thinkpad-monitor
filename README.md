@@ -18,36 +18,46 @@ A lightweight, terminal-based hardware monitoring dashboard written in Python an
 
 ---
 
-## 📋 Prerequisites
+## 🚀 Quick Setup & Installation
 
-- **OS**: Linux (Fedora, Ubuntu, Debian, Arch, etc.)
-- **Python**: 3.8+
-- **Python Dependencies**: `psutil`
+### Option 1: One-Line Quick Install (Recommended)
+Run this single command in your terminal to automatically configure dependencies, install the `thinkpad-monitor` command, and add a Desktop application menu shortcut:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/hon2838/thinkpad-monitor/main/install.sh | bash
+```
 
 ---
 
-## 🚀 Installation & Usage
+### Option 2: Via Pip / Pipx
+```bash
+pipx install git+https://github.com/hon2838/thinkpad-monitor.git
+# Or standard pip:
+pip install git+https://github.com/hon2838/thinkpad-monitor.git
+```
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/hon2838/thinkpad-monitor.git
-   cd thinkpad-monitor
-   ```
+---
 
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+### Option 3: Manual Clone
+```bash
+git clone https://github.com/hon2838/thinkpad-monitor.git
+cd thinkpad-monitor
+./install.sh
+```
 
-3. **Launch the monitor**:
-   ```bash
-   ./thinkpad_monitor.sh
-   # Or directly:
-   python3 thinkpad_monitor.py
-   ```
+---
 
-4. **Controls**:
-   - Press **`q`** at any time to exit the dashboard.
+## 🖥️ Usage
+
+Once installed, simply run from anywhere in your terminal:
+```bash
+thinkpad-monitor
+```
+
+*(You can also launch **ThinkPad Hardware Monitor** directly from your desktop applications / start menu).*
+
+### Controls
+* Press **`q`** at any time to exit the dashboard.
 
 ---
 
