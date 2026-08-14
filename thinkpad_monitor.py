@@ -928,35 +928,38 @@ def monitor(stdscr):
         pstate = get_pstate_mode()
         cached_ram, _ = get_ram_cache_info()
         
-        safe_addstr(stdscr, 4, col_l, "┌─ System Load & Memory ────────────────────────┐", c_cyan | c_bold)
-        safe_addstr(stdscr, 5, col_l, f"│ Load Avg: ", c_cyan)
+        curr_l = 3
+        
+        safe_addstr(stdscr, curr_l, col_l, "┌─ System Load & Memory ────────────────────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, curr_l + 1, col_l, f"│ Load Avg: ", c_cyan)
         drv_str = f"Drv: {scaling_driver}"
         if pstate != "n/a":
             drv_str += f" ({pstate})"
-        safe_addstr(stdscr, 5, col_l + 12, f"{load_1:.2f}, {load_5:.2f}, {load_15:.2f} | {drv_str}")
+        safe_addstr(stdscr, curr_l + 1, col_l + 12, f"{load_1:.2f}, {load_5:.2f}, {load_15:.2f} | {drv_str}")
         
-        safe_addstr(stdscr, 6, col_l, f"│ CPU Mode: ", c_cyan)
-        safe_addstr(stdscr, 6, col_l + 12, f"Boost: {cpu_boost} | EPP: {cpu_epp} | Screen: {brightness_pct}%", c_green if cpu_boost=="Enabled" else c_yellow)
+        safe_addstr(stdscr, curr_l + 2, col_l, f"│ CPU Mode: ", c_cyan)
+        safe_addstr(stdscr, curr_l + 2, col_l + 12, f"Boost: {cpu_boost} | EPP: {cpu_epp} | Screen: {brightness_pct}%", c_green if cpu_boost=="Enabled" else c_yellow)
 
-        safe_addstr(stdscr, 7, col_l, f"│ RAM Use:  ", c_cyan)
-        draw_colored_bar(stdscr, 7, col_l + 12, mem.used, mem.total, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 7, col_l + 27, f"{mem_used:.1f}/{mem_total:.1f}G (Cache: {cached_ram:.1f}G)")
+        safe_addstr(stdscr, curr_l + 3, col_l, f"│ RAM Use:  ", c_cyan)
+        draw_colored_bar(stdscr, curr_l + 3, col_l + 12, mem.used, mem.total, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, curr_l + 3, col_l + 27, f"{mem_used:.1f}/{mem_total:.1f}G (Cache: {cached_ram:.1f}G)")
         
-        safe_addstr(stdscr, 8, col_l, f"│ Swap Use: ", c_cyan)
-        draw_colored_bar(stdscr, 8, col_l + 12, swap.used, swap.total, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 8, col_l + 27, f"{swap_used:.1f}/{swap_total:.1f} GB ({swap.percent:.0f}%)")
+        safe_addstr(stdscr, curr_l + 4, col_l, f"│ Swap Use: ", c_cyan)
+        draw_colored_bar(stdscr, curr_l + 4, col_l + 12, swap.used, swap.total, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, curr_l + 4, col_l + 27, f"{swap_used:.1f}/{swap_total:.1f} GB ({swap.percent:.0f}%)")
+        curr_l += 5
 
         # Storage & Dual NVMe SSD
-        safe_addstr(stdscr, 10, col_l, "┌─ Storage & Dual NVMe SSD ─────────────────────┐", c_cyan | c_bold)
-        safe_addstr(stdscr, 11, col_l, f"│ Disk Root:", c_cyan)
-        draw_colored_bar(stdscr, 11, col_l + 12, disk.used, disk.total, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 11, col_l + 27, f"{disk_used:.1f}/{disk_total:.1f} GB ({disk.percent:.0f}%)")
+        safe_addstr(stdscr, curr_l, col_l, "┌─ Storage & Dual NVMe SSD ─────────────────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, curr_l + 1, col_l, f"│ Disk Root:", c_cyan)
+        draw_colored_bar(stdscr, curr_l + 1, col_l + 12, disk.used, disk.total, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, curr_l + 1, col_l + 27, f"{disk_used:.1f}/{disk_total:.1f} GB ({disk.percent:.0f}%)")
         
-        safe_addstr(stdscr, 12, col_l, f"│ I/O Speed:", c_cyan)
-        safe_addstr(stdscr, 12, col_l + 12, f"R: {state.disk_read_rate:5.2f} MB/s", c_green)
-        safe_addstr(stdscr, 12, col_l + 28, f"W: {state.disk_write_rate:5.2f} MB/s", c_yellow)
+        safe_addstr(stdscr, curr_l + 2, col_l, f"│ I/O Speed:", c_cyan)
+        safe_addstr(stdscr, curr_l + 2, col_l + 12, f"R: {state.disk_read_rate:5.2f} MB/s", c_green)
+        safe_addstr(stdscr, curr_l + 2, col_l + 28, f"W: {state.disk_write_rate:5.2f} MB/s", c_yellow)
         
-        line_idx = 13
+        line_idx = curr_l + 3
         for idx, nvme in enumerate(nvme_list):
             model_short = nvme.get('model', 'SSD')[:11]
             ctrl_t = nvme.get('temp1', 0.0)
@@ -971,44 +974,47 @@ def monitor(stdscr):
             safe_addstr(stdscr, line_idx, col_l, f"│ {nvme['name'].upper()}:    ", c_cyan)
             safe_addstr(stdscr, line_idx, col_l + 12, f"{model_short:<11} | Ctrl:{ctrl_t:.0f}°C{crit_str} Flash:{flash_t:.0f}°C", temp_attr)
             line_idx += 1
+        curr_l = line_idx
 
         # Network
         wifi_info = get_wifi_details()
-        safe_addstr(stdscr, 16, col_l, f"┌─ Network: {active_iface:<7} ({ip}) ──────────┐", c_cyan | c_bold)
-        safe_addstr(stdscr, 17, col_l, f"│ Speed:    ", c_cyan)
-        safe_addstr(stdscr, 17, col_l + 12, f"Down: {state.net_rx_rate:5.2f} MB/s | Up: {state.net_tx_rate:5.2f} MB/s", c_green)
-        safe_addstr(stdscr, 18, col_l, f"│ Wi-Fi 6:  ", c_cyan)
+        safe_addstr(stdscr, curr_l, col_l, f"┌─ Network: {active_iface:<7} ({ip}) ──────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, curr_l + 1, col_l, f"│ Speed:    ", c_cyan)
+        safe_addstr(stdscr, curr_l + 1, col_l + 12, f"Down: {state.net_rx_rate:5.2f} MB/s | Up: {state.net_tx_rate:5.2f} MB/s", c_green)
+        safe_addstr(stdscr, curr_l + 2, col_l, f"│ Wi-Fi 6:  ", c_cyan)
         wifi_str = f"{wifi_info['ssid']} ({wifi_info['signal']}%) | {wifi_info['rate']}" if wifi_info['ssid'] != "Disconnected" else "Disconnected"
-        safe_addstr(stdscr, 18, col_l + 12, f"{wifi_str}", c_magenta if wifi_info['ssid'] != "Disconnected" else c_yellow)
-        safe_addstr(stdscr, 19, col_l, f"│ Traffic:  ", c_cyan)
-        safe_addstr(stdscr, 19, col_l + 12, f"Down: {state.total_rx_mb/1024:.1f} GB | Up: {state.total_tx_mb/1024:.1f} GB")
+        safe_addstr(stdscr, curr_l + 2, col_l + 12, f"{wifi_str}", c_magenta if wifi_info['ssid'] != "Disconnected" else c_yellow)
+        safe_addstr(stdscr, curr_l + 3, col_l, f"│ Traffic:  ", c_cyan)
+        safe_addstr(stdscr, curr_l + 3, col_l + 12, f"Down: {state.total_rx_mb/1024:.1f} GB | Up: {state.total_tx_mb/1024:.1f} GB")
+        curr_l += 4
 
         # Top Active Processes
-        safe_addstr(stdscr, 21, col_l, "┌─ Top Active Processes ────────────────────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, curr_l, col_l, "┌─ Top Active Processes ────────────────────────┐", c_cyan | c_bold)
         for idx, proc in enumerate(top_procs):
-            safe_addstr(stdscr, 22 + idx, col_l, f"│ P{idx+1}: {proc['name']:<14}", c_cyan)
-            safe_addstr(stdscr, 22 + idx, col_l + 20, f"CPU: {proc['cpu']:5.1f}% | RAM: {proc['mem']:4.1f}%")
+            safe_addstr(stdscr, curr_l + 1 + idx, col_l, f"│ P{idx+1}: {proc['name']:<14}", c_cyan)
+            safe_addstr(stdscr, curr_l + 1 + idx, col_l + 20, f"CPU: {proc['cpu']:5.1f}% | RAM: {proc['mem']:4.1f}%")
+        curr_l += 1 + len(top_procs)
 
         # Battery Status & Health
         bat_wh = get_battery_time_and_wh()
-        safe_addstr(stdscr, 26, col_l, "┌─ Battery & Power Delivery ────────────────────┐", c_cyan | c_bold)
-        safe_addstr(stdscr, 27, col_l, f"│ Status:   ", c_cyan)
+        safe_addstr(stdscr, curr_l, col_l, "┌─ Battery & Power Delivery ────────────────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, curr_l + 1, col_l, f"│ Status:   ", c_cyan)
         lvl_str = f", Lvl: {bat['capacity_level']}" if bat['capacity_level'] else ""
-        safe_addstr(stdscr, 27, col_l + 12, f"{bat['status']} (AC: {ac_status}{lvl_str})")
+        safe_addstr(stdscr, curr_l + 1, col_l + 12, f"{bat['status']} (AC: {ac_status}{lvl_str})")
         
-        safe_addstr(stdscr, 28, col_l, f"│ Capacity: ", c_cyan)
-        draw_colored_bar(stdscr, 28, col_l + 12, bat['capacity'], 100, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 28, col_l + 27, f"{bat['capacity']}%", c_green if bat['capacity'] > 20 else c_red)
+        safe_addstr(stdscr, curr_l + 2, col_l, f"│ Capacity: ", c_cyan)
+        draw_colored_bar(stdscr, curr_l + 2, col_l + 12, bat['capacity'], 100, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, curr_l + 2, col_l + 27, f"{bat['capacity']}%", c_green if bat['capacity'] > 20 else c_red)
         
-        safe_addstr(stdscr, 29, col_l, f"│ Health:   ", c_cyan)
-        safe_addstr(stdscr, 29, col_l + 12, f"{bat_h['health']:.1f}% ", c_green if bat_h['health'] > 85 else c_yellow)
+        safe_addstr(stdscr, curr_l + 3, col_l, f"│ Health:   ", c_cyan)
+        safe_addstr(stdscr, curr_l + 3, col_l + 12, f"{bat_h['health']:.1f}% ", c_green if bat_h['health'] > 85 else c_yellow)
         type_str = f" | {bat['charge_type']}" if bat['charge_type'] else ""
-        safe_addstr(stdscr, 29, col_l + 21, f"(Cycles: {bat_h['cycles']}){type_str}")
+        safe_addstr(stdscr, curr_l + 3, col_l + 21, f"(Cycles: {bat_h['cycles']}){type_str}")
         
-        safe_addstr(stdscr, 30, col_l, f"│ Limits:   ", c_cyan)
-        safe_addstr(stdscr, 30, col_l + 12, f"Thresholds: Start {thresholds['start']}% / Stop {thresholds['stop']}%")
+        safe_addstr(stdscr, curr_l + 4, col_l, f"│ Limits:   ", c_cyan)
+        safe_addstr(stdscr, curr_l + 4, col_l + 12, f"Thresholds: Start {thresholds['start']}% / Stop {thresholds['stop']}%")
         
-        safe_addstr(stdscr, 31, col_l, f"│ Power:    ", c_cyan)
+        safe_addstr(stdscr, curr_l + 5, col_l, f"│ Power:    ", c_cyan)
         status_upper = bat['status'].upper()
         if "CHARGING" in status_upper and "DIS" not in status_upper:
             pwr_str = f"Charge: +{bat['power']:.2f} W"
@@ -1023,89 +1029,95 @@ def monitor(stdscr):
             pwr_str = f"Rate: {bat['power']:.2f} W"
             pwr_color = c_yellow
 
-        safe_addstr(stdscr, 31, col_l + 12, f"{bat['voltage']:.2f} V | {pwr_str}", pwr_color)
+        safe_addstr(stdscr, curr_l + 5, col_l + 12, f"{bat['voltage']:.2f} V | {pwr_str}", pwr_color)
 
-        safe_addstr(stdscr, 32, col_l, f"│ Time/Cap: ", c_cyan)
-        safe_addstr(stdscr, 32, col_l + 12, f"{bat_wh['time_str']} | {bat_wh['energy_now_wh']:.1f}/{bat_wh['energy_full_wh']:.1f} Wh", c_green)
+        safe_addstr(stdscr, curr_l + 6, col_l, f"│ Time/Cap: ", c_cyan)
+        safe_addstr(stdscr, curr_l + 6, col_l + 12, f"{bat_wh['time_str']} | {bat_wh['energy_now_wh']:.1f}/{bat_wh['energy_full_wh']:.1f} Wh", c_green)
+        curr_l += 7
 
         # ==================== RIGHT COLUMN ====================
-        col_r = 2 if is_single_col else max(52, max_x // 2)
-        ro = 28 if is_single_col else 0
+        col_r = 2 if is_single_col else 52
+        curr_r = curr_l if is_single_col else 3
         
         # APU Power & GPU
-        safe_addstr(stdscr, 4 + ro, col_r, "┌─ APU Power & GPU Status ──────────────────────┐", c_cyan | c_bold)
-        safe_addstr(stdscr, 5 + ro, col_r, f"│ APU Draw: ", c_cyan)
-        draw_colored_bar(stdscr, 5 + ro, col_r + 12, pkg_power, ppt_limit, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 5 + ro, col_r + 27, f"{pkg_power:.1f} W / {ppt_limit:.0f}W", c_yellow)
+        safe_addstr(stdscr, curr_r, col_r, "┌─ APU Power & GPU Status ──────────────────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, curr_r + 1, col_r, f"│ APU Draw: ", c_cyan)
+        draw_colored_bar(stdscr, curr_r + 1, col_r + 12, pkg_power, ppt_limit, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, curr_r + 1, col_r + 27, f"{pkg_power:.1f} W / {ppt_limit:.0f}W", c_yellow)
         
-        safe_addstr(stdscr, 6 + ro, col_r, f"│ GPU Busy: ", c_cyan)
-        draw_colored_bar(stdscr, 6 + ro, col_r + 12, gpu['busy'], 100, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 6 + ro, col_r + 27, f"{gpu['busy']}%", c_magenta)
+        safe_addstr(stdscr, curr_r + 2, col_r, f"│ GPU Busy: ", c_cyan)
+        draw_colored_bar(stdscr, curr_r + 2, col_r + 12, gpu['busy'], 100, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, curr_r + 2, col_r + 27, f"{gpu['busy']}%", c_magenta)
         
-        safe_addstr(stdscr, 7 + ro, col_r, f"│ VRAM Use: ", c_cyan)
-        draw_colored_bar(stdscr, 7 + ro, col_r + 12, gpu['vram_used'], max(gpu['vram_total'], 1), width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 7 + ro, col_r + 27, f"{gpu['vram_used']:.0f}/{gpu['vram_total']:.0f} MB", c_magenta)
+        safe_addstr(stdscr, curr_r + 3, col_r, f"│ VRAM Use: ", c_cyan)
+        draw_colored_bar(stdscr, curr_r + 3, col_r + 12, gpu['vram_used'], max(gpu['vram_total'], 1), width=12, has_colors=has_colors)
+        safe_addstr(stdscr, curr_r + 3, col_r + 27, f"{gpu['vram_used']:.0f}/{gpu['vram_total']:.0f} MB", c_magenta)
         
-        safe_addstr(stdscr, 8 + ro, col_r, f"│ GTT Use:  ", c_cyan)
-        draw_colored_bar(stdscr, 8 + ro, col_r + 12, gpu['gtt_used'], max(gpu['gtt_total'], 1), width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 8 + ro, col_r + 27, f"{gpu['gtt_used']:.0f}/{gpu['gtt_total']:.0f} MB")
+        safe_addstr(stdscr, curr_r + 4, col_r, f"│ GTT Use:  ", c_cyan)
+        draw_colored_bar(stdscr, curr_r + 4, col_r + 12, gpu['gtt_used'], max(gpu['gtt_total'], 1), width=12, has_colors=has_colors)
+        safe_addstr(stdscr, curr_r + 4, col_r + 27, f"{gpu['gtt_used']:.0f}/{gpu['gtt_total']:.0f} MB")
         
-        safe_addstr(stdscr, 9 + ro, col_r, f"│ GPU Core: ", c_cyan)
-        safe_addstr(stdscr, 9 + ro, col_r + 12, f"{gpu['sclk']:.0f} MHz | Temp: {gpu['temp']:.1f} °C | Perf: {gpu['perf_level']}", c_magenta)
+        safe_addstr(stdscr, curr_r + 5, col_r, f"│ GPU Core: ", c_cyan)
+        safe_addstr(stdscr, curr_r + 5, col_r + 12, f"{gpu['sclk']:.0f} MHz | Temp: {gpu['temp']:.1f} °C | Perf: {gpu['perf_level']}", c_magenta)
         
-        safe_addstr(stdscr, 10 + ro, col_r, f"│ GPU Volt: ", c_cyan)
-        safe_addstr(stdscr, 10 + ro, col_r + 12, f"GFX: {gpu['vddgfx']:.3f}V | NB: {gpu['vddnb']:.3f}V")
+        safe_addstr(stdscr, curr_r + 6, col_r, f"│ GPU Volt: ", c_cyan)
+        safe_addstr(stdscr, curr_r + 6, col_r + 12, f"GFX: {gpu['vddgfx']:.3f}V | NB: {gpu['vddnb']:.3f}V")
         
-        safe_addstr(stdscr, 11 + ro, col_r, f"│ GPU DPM:  ", c_cyan)
+        safe_addstr(stdscr, curr_r + 7, col_r, f"│ GPU DPM:  ", c_cyan)
         dpm_parts = []
         for label, dpm in [("GFX", gpu['dpm_sclk']), ("MEM", gpu['dpm_mclk']), ("FCLK", gpu['dpm_fclk'])]:
             if dpm is None:
                 dpm_parts.append(f"{label} n/a")
             else:
                 dpm_parts.append(f"{label} L{dpm[0] + 1}/{dpm[1]}")
-        safe_addstr(stdscr, 11 + ro, col_r + 12, " | ".join(dpm_parts), c_magenta)
+        safe_addstr(stdscr, curr_r + 7, col_r + 12, " | ".join(dpm_parts), c_magenta)
+        curr_r += 8
         
         # CPU Frequencies & Loads
-        safe_addstr(stdscr, 13 + ro, col_r, "┌─ CPU Core Telemetry (Freq & Load) ────────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, curr_r, col_r, "┌─ CPU Core Telemetry (Freq & Load) ────────────┐", c_cyan | c_bold)
         for i in range(6):
             load_l = loads[i] if i < len(loads) else 0.0
             freq_l = freqs[i] if i < len(freqs) else 0.0
-            draw_core_line(stdscr, 14 + i + ro, col_r + 2, i, freq_l, load_l, has_colors)
+            draw_core_line(stdscr, curr_r + 1 + i, col_r + 2, i, freq_l, load_l, has_colors)
             
-            safe_addstr(stdscr, 14 + i + ro, col_r + 24, "│", c_cyan)
+            safe_addstr(stdscr, curr_r + 1 + i, col_r + 24, "│", c_cyan)
             
             load_r_val = loads[i+6] if (i+6) < len(loads) else 0.0
             freq_r_val = freqs[i+6] if (i+6) < len(freqs) else 0.0
-            draw_core_line(stdscr, 14 + i + ro, col_r + 26, i+6, freq_r_val, load_r_val, has_colors)
+            draw_core_line(stdscr, curr_r + 1 + i, col_r + 26, i+6, freq_r_val, load_r_val, has_colors)
+        curr_r += 7
 
         # Thermals & Cooling
         tj_margin = max(0.0, 105.0 - temp)
-        safe_addstr(stdscr, 21 + ro, col_r, "┌─ Thermals & Cooling Headroom ─────────────────┐", c_cyan | c_bold)
-        safe_addstr(stdscr, 22 + ro, col_r, f"│ CPU Temp: ", c_cyan)
-        draw_colored_bar(stdscr, 22 + ro, col_r + 12, temp, 95.0, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 22 + ro, col_r + 27, f"{temp:.1f} °C (Margin: +{tj_margin:.1f}°C)", c_red if temp > 75 else c_green)
+        safe_addstr(stdscr, curr_r, col_r, "┌─ Thermals & Cooling Headroom ─────────────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, curr_r + 1, col_r, f"│ CPU Temp: ", c_cyan)
+        draw_colored_bar(stdscr, curr_r + 1, col_r + 12, temp, 95.0, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, curr_r + 1, col_r + 27, f"{temp:.1f} °C (Margin: +{tj_margin:.1f}°C)", c_red if temp > 75 else c_green)
         
-        safe_addstr(stdscr, 23 + ro, col_r, f"│ Fan Spd:  ", c_cyan)
-        draw_colored_bar(stdscr, 23 + ro, col_r + 12, fan, 3859.0, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, 23 + ro, col_r + 27, f"{fan:.0f} RPM (Lvl: {fan_lvl})", c_magenta)
+        safe_addstr(stdscr, curr_r + 2, col_r, f"│ Fan Spd:  ", c_cyan)
+        draw_colored_bar(stdscr, curr_r + 2, col_r + 12, fan, 3859.0, width=12, has_colors=has_colors)
+        safe_addstr(stdscr, curr_r + 2, col_r + 27, f"{fan:.0f} RPM (Lvl: {fan_lvl})", c_magenta)
         
-        safe_addstr(stdscr, 24 + ro, col_r, f"│ Aux Temp: ", c_cyan)
-        safe_addstr(stdscr, 24 + ro, col_r + 12, f"ThinkPad Sensor: {temp:.1f}°C | Wi-Fi: {wifi_temp:.1f}°C", c_green)
+        safe_addstr(stdscr, curr_r + 3, col_r, f"│ Aux Temp: ", c_cyan)
+        safe_addstr(stdscr, curr_r + 3, col_r + 12, f"ThinkPad Sensor: {temp:.1f}°C | Wi-Fi: {wifi_temp:.1f}°C", c_green)
+        curr_r += 4
 
         # USB-C Charger
-        safe_addstr(stdscr, 26 + ro, col_r, "┌─ USB-C Charger Ports ─────────────────────────┐", c_cyan | c_bold)
+        safe_addstr(stdscr, curr_r, col_r, "┌─ USB-C Charger Ports ─────────────────────────┐", c_cyan | c_bold)
         for idx, p in enumerate(usbc):
             port_num = idx + 1
             if p["online"] == 1:
                 p_watts = p["v_max"] * p["c_max"]
                 live_w = p["v_now"] * p["c_now"]
-                safe_addstr(stdscr, 27 + idx + ro, col_r, f"│ Port {port_num}: ", c_cyan)
-                safe_addstr(stdscr, 27 + idx + ro, col_r + 10, f"PD Contract: {live_w:.1f}W ({p['v_now']:.1f}V @ {p['c_now']:.1f}A)", c_green)
+                safe_addstr(stdscr, curr_r + 1 + idx, col_r, f"│ Port {port_num}: ", c_cyan)
+                safe_addstr(stdscr, curr_r + 1 + idx, col_r + 10, f"PD Contract: {live_w:.1f}W ({p['v_now']:.1f}V @ {p['c_now']:.1f}A)", c_green)
             else:
-                safe_addstr(stdscr, 27 + idx + ro, col_r, f"│ Port {port_num}: ", c_cyan)
-                safe_addstr(stdscr, 27 + idx + ro, col_r + 10, f"Offline", curses.A_DIM)
-                
-        quit_y = max_y - 1 if max_y > 33 else (33 + ro)
+                safe_addstr(stdscr, curr_r + 1 + idx, col_r, f"│ Port {port_num}: ", c_cyan)
+                safe_addstr(stdscr, curr_r + 1 + idx, col_r + 10, f"Offline", curses.A_DIM)
+        curr_r += 1 + len(usbc)
+
+        max_used_y = max(curr_l, curr_r)
+        quit_y = max_y - 1 if max_y > (max_used_y + 1) else (max_used_y + 1)
         safe_addstr(stdscr, quit_y, 2, "Press 'q' to quit monitor dashboard.", curses.A_DIM)
         stdscr.refresh()
         

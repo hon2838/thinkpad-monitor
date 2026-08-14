@@ -6,11 +6,11 @@ A terminal-based hardware monitoring dashboard written in Python and Curses, spe
 
 ## Features
 
-- **System Load & Memory**: Live load averages, RAM usage bar, Swap usage bar.
-- **Storage & NVMe SSD**: Disk utilization, dynamic read/write I/O speeds, and NVMe controller temperature.
+- **System Load & Memory**: Live load averages, CPU scaling driver + AMD pstate mode, RAM usage bar, Swap usage bar.
+- **Storage & NVMe SSD**: Disk utilization, dynamic read/write I/O speeds, and NVMe controller temperature with sysfs-derived critical threshold margin.
 - **Network Stats**: Active interface detection, live download/upload speeds (MB/s), and total traffic counters.
-- **Battery & Power Delivery**: Battery status (charging, discharging, full), current capacity bar, health percentage, cycle count, start/stop charging thresholds, and live power draw in Watts.
-- **APU Power & GPU**: Package power draw, GPU utilization, VRAM usage, GTT memory usage, and GPU temperature/voltage telemetry.
+- **Battery & Power Delivery**: Battery status (charging, discharging, full) with capacity level, current capacity bar, health percentage, cycle count, active charge type, start/stop charging thresholds, and live power draw in Watts.
+- **APU Power & GPU**: Package power draw, GPU utilization, VRAM/GTT usage, DPM clock levels (GFX/MEM/FCLK), GPU performance level, and GPU temperature/voltage telemetry.
 - **CPU Core Telemetry**: Independent frequency (GHz) and load (%) display for all 12 threads.
 - **Thermals & Cooling**: Real-time CPU core temp, fan speed (RPM), fan PWM level (auto/manual), and auxiliary sensors (ThinkPad board / Wi-Fi).
 - **USB-C Telemetry**: Charger power contract details (Voltage, Current, live Wattage) on both USB-C ports.
