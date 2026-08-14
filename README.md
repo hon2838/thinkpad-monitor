@@ -1,57 +1,56 @@
-# ThinkPad Hardware Monitor (TUI)
+# ThinkPad & ThinkBook Hardware Monitor (TUI)
 
-A terminal-based hardware monitoring dashboard written in Python and Curses, specifically tailored for **Lenovo ThinkPad (e.g., L15 Gen 1)** running Linux. It visualizes CPU, GPU, memory, battery status, NVMe temperature, active network speeds, and charger statistics in real-time.
+A lightweight, terminal-based hardware monitoring dashboard written in Python and Curses, specifically tailored for **Lenovo ThinkPad & ThinkBook laptops** (as well as modern AMD Ryzen / Intel Linux systems). It provides a real-time, compact telemetry overview of CPU, GPU, memory, battery power, NVMe temperatures, and network activity.
 
-![Preview](preview.png) *(Placeholder or screenshot can be placed here)*
+---
 
-## Features
+## ✨ Features
 
-- **System Load & Memory**: Live load averages, CPU scaling driver + AMD pstate mode, RAM usage bar, Swap usage bar.
-- **Storage & NVMe SSD**: Disk utilization, dynamic read/write I/O speeds, and NVMe controller temperature with sysfs-derived critical threshold margin.
-- **Network Stats**: Active interface detection, live download/upload speeds (MB/s), and total traffic counters.
-- **Battery & Power Delivery**: Battery status (charging, discharging, full) with capacity level, current capacity bar, health percentage, cycle count, active charge type, start/stop charging thresholds, and live power draw in Watts.
-- **APU Power & GPU**: Package power draw, GPU utilization, VRAM/GTT usage, DPM clock levels (GFX/MEM/FCLK), GPU performance level, and GPU temperature/voltage telemetry.
-- **CPU Core Telemetry**: Independent frequency (GHz) and load (%) display for all 12 threads.
-- **Thermals & Cooling**: Real-time CPU core temp, fan speed (RPM), fan PWM level (auto/manual), and auxiliary sensors (ThinkPad board / Wi-Fi).
-- **USB-C Telemetry**: Charger power contract details (Voltage, Current, live Wattage) on both USB-C ports.
+- **System Load & Memory**: Real-time load averages (1/5/15m), CPU scaling driver, AMD P-State mode, live RAM usage bar with cache breakdown, and Swap utilization.
+- **Storage & Dual NVMe SSD**: Root filesystem usage bar, dynamic I/O read/write throughput (MB/s), NVMe drive models, and controller vs. flash NAND temperatures with critical threshold warning limits.
+- **Network Telemetry**: Active network interface auto-detection, IP address, real-time download/upload transfer rates (MB/s), Wi-Fi 6 SSID/signal/link rate, and total session data counters.
+- **Battery & Power Delivery**: Charge status (Charging / Discharging / Full), capacity level, health percentage, cycle count, battery chemistry type, charging threshold limits, live voltage, and power draw in Watts (+charge / -draw).
+- **APU & GPU Telemetry**: APU package power draw (W) vs PPT limit, GPU busy %, VRAM and GTT memory usage bars, GPU core clock (MHz), GPU core temperature, operating voltage (GFX/NB), and active DPM performance levels (GFX/MEM/FCLK).
+- **CPU Core Telemetry**: Real-time independent per-core frequency (GHz/MHz) and load percentage bar graph for all cores/threads.
+- **Thermals & Cooling**: CPU package temp with thermal junction headroom margin (+°C to TjMax), fan speed RPM (or EC Autonomous mode on ThinkBooks), fan PWM level, and auxiliary sensors (motherboard / Wi-Fi).
+- **USB-C Power Delivery Ports**: Live USB-C PD contract negotiation status (Voltage, Current, live Wattage) across ports.
+- **Warm Aesthetic Curses Theme**: Custom 256-color palette (warm khaki, peach, cyan, and emerald green) with responsive single/dual-column layout.
 
-## Prerequisites
+---
 
-- **OS**: Linux
-- **Python**: 3.x
-- **Dependencies**: `psutil` (read below for system file access requirements)
+## 📋 Prerequisites
 
-### Hardware-specific Paths
-This script reads from standard Linux `sysfs` and `/proc` systems. Some paths may need adjustment depending on your exact ThinkPad model or kernel configuration (e.g., hwmon index numbers for CPU/GPU/fan).
+- **OS**: Linux (Fedora, Ubuntu, Debian, Arch, etc.)
+- **Python**: 3.8+
+- **Python Dependencies**: `psutil`
 
-## Installation
+---
 
-1. Clone this repository:
+## 🚀 Installation & Usage
+
+1. **Clone the repository**:
    ```bash
    git clone https://github.com/hon2838/thinkpad-monitor.git
    cd thinkpad-monitor
    ```
 
-2. Install Python dependencies:
+2. **Install dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. Make the launcher script executable:
+3. **Launch the monitor**:
    ```bash
-   chmod +x thinkpad_monitor.sh
+   ./thinkpad_monitor.sh
+   # Or directly:
+   python3 thinkpad_monitor.py
    ```
 
-## Usage
+4. **Controls**:
+   - Press **`q`** at any time to exit the dashboard.
 
-Run the launcher script:
-```bash
-./thinkpad_monitor.sh
-```
+---
 
-Or run the python script directly:
-```bash
-python3 thinkpad_monitor.py
-```
+## 📄 License
 
-Press `q` at any time to exit the dashboard.
+This project is licensed under the [MIT License](LICENSE).
