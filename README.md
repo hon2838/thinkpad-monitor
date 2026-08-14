@@ -1,5 +1,8 @@
 # ThinkPad & ThinkBook Hardware Monitor (TUI)
 
+[![GitHub Release](https://img.shields.io/github/v/release/hon2838/thinkpad-monitor?color=blue&logo=github)](https://github.com/hon2838/thinkpad-monitor/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 A lightweight, terminal-based hardware monitoring dashboard written in Python and Curses, specifically tailored for **Lenovo ThinkPad & ThinkBook laptops** (as well as modern AMD Ryzen / Intel Linux systems). It provides a real-time, compact telemetry overview of CPU, GPU, memory, battery power, NVMe temperatures, and network activity.
 
 ---
@@ -20,8 +23,22 @@ A lightweight, terminal-based hardware monitoring dashboard written in Python an
 
 ## 🚀 Quick Setup & Installation
 
-### Option 1: One-Line Quick Install (Recommended)
-Run this single command in your terminal to automatically configure dependencies, install the `thinkpad-monitor` command, and add a Desktop application menu shortcut:
+### Option 1: Standalone Single Binary (Zero Dependencies)
+Download the pre-compiled binary directly from the [GitHub Releases](https://github.com/hon2838/thinkpad-monitor/releases/latest) page (runs instantly without needing Python or pip):
+
+```bash
+# Download latest binary
+curl -L -o thinkpad-monitor https://github.com/hon2838/thinkpad-monitor/releases/latest/download/thinkpad-monitor
+
+# Make executable and move to PATH
+chmod +x thinkpad-monitor
+mkdir -p ~/.local/bin && mv thinkpad-monitor ~/.local/bin/
+```
+
+---
+
+### Option 2: One-Line Script Installer (Recommended)
+Run this single command in your terminal to automatically install dependencies, set up the command, and create a Desktop launcher menu shortcut:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/hon2838/thinkpad-monitor/main/install.sh | bash
@@ -29,7 +46,7 @@ curl -sSL https://raw.githubusercontent.com/hon2838/thinkpad-monitor/main/instal
 
 ---
 
-### Option 2: Via Pip / Pipx
+### Option 3: Via Pip / Pipx
 ```bash
 pipx install git+https://github.com/hon2838/thinkpad-monitor.git
 # Or standard pip:
@@ -38,7 +55,7 @@ pip install git+https://github.com/hon2838/thinkpad-monitor.git
 
 ---
 
-### Option 3: Manual Clone
+### Option 4: Manual Git Clone
 ```bash
 git clone https://github.com/hon2838/thinkpad-monitor.git
 cd thinkpad-monitor
