@@ -128,6 +128,17 @@ def get_power_usage():
     return 0.0
 
 def get_fan_speed():
+    # 1. Search all hwmon for fan*_input
+    try:
+        import glob
+        for f in glob.glob("/sys/class/hwmon/hwmon*/fan*_input"):
+            with open(f, "r") as fp:
+                v = float(fp.read().strip())
+                if v > 0:
+                    return v
+    except Exception:
+        pass
+
     tp = find_hwmon_dir("thinkpad")
     if tp:
         p = os.path.join(tp, "fan1_input")
@@ -144,7 +155,7 @@ def get_fan_speed():
                     return float(line.split(":")[1].strip())
     except Exception:
         pass
-    return 0.0
+    return -1.0
 
 def get_fan_pwm():
     try:
@@ -154,6 +165,9 @@ def get_fan_pwm():
                     return line.split(":")[1].strip()
     except Exception:
         pass
+    prof = get_platform_profile()
+    if prof != "n/a":
+        return f"auto ({prof})"
     return "auto"
 
 
@@ -1095,11 +1109,14 @@ def monitor(stdscr):
         safe_addstr(stdscr, curr_r + 1, col_r + 27, f"{temp:.1f} °C (Margin: +{tj_margin:.1f}°C)", c_red if temp > 75 else c_green)
         
         safe_addstr(stdscr, curr_r + 2, col_r, f"│ Fan Spd:  ", c_cyan)
-        draw_colored_bar(stdscr, curr_r + 2, col_r + 12, fan, 3859.0, width=12, has_colors=has_colors)
-        safe_addstr(stdscr, curr_r + 2, col_r + 27, f"{fan:.0f} RPM (Lvl: {fan_lvl})", c_magenta)
+        if fan >= 0:
+            draw_colored_bar(stdscr, curr_r + 2, col_r + 12, fan, 3859.0, width=12, has_colors=has_colors)
+            safe_addstr(stdscr, curr_r + 2, col_r + 27, f"{fan:.0f} RPM (Lvl: {fan_lvl})", c_magenta)
+        else:
+            safe_addstr(stdscr, curr_r + 2, col_r + 12, f"EC Managed (Auto) | Profile: {profile.title()}", c_magenta)
         
         safe_addstr(stdscr, curr_r + 3, col_r, f"│ Aux Temp: ", c_cyan)
-        safe_addstr(stdscr, curr_r + 3, col_r + 12, f"ThinkPad Sensor: {temp:.1f}°C | Wi-Fi: {wifi_temp:.1f}°C", c_green)
+        safe_addstr(stdscr, curr_r + 3, col_r + 12, f"Board / APU: {temp:.1f}°C | Wi-Fi: {wifi_temp:.1f}°C", c_green)
         curr_r += 4
 
         # USB-C Charger
