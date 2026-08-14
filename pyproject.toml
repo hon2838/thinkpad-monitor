@@ -26,7 +26,7 @@ classifiers = [
 ]
 
 [project.scripts]
-thinkpad-monitor = "thinkpad_monitor:main"
+thinkpad-monitor = "thinkpad_monitor.monitor:main"
 
-[tool.setuptools]
-py-modules = ["thinkpad_monitor"]
+[tool.setuptools.packages.find]
+where = ["src"]
