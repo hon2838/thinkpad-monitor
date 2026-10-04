@@ -108,9 +108,11 @@ passed desktop smoke and version checks. The user's launcher was upgraded to
 CPU readings and closed cleanly on the current KDE/Intel laptop.
 
 The first current GitHub run passed x86-64/Python 3.10 and 3.13 and ARM64/Python
-3.13, but ARM64/Python 3.10 still aborted with PySide6 6.11.2. The desktop extra
-now keeps Linux ARM64/Python below 3.12 on PySide6 below 6.11; this dependency
-workaround is being verified in the unchanged test matrix. No Python reference
+3.13, but ARM64/Python 3.10 aborted with both PySide6 6.11.2 and 6.10.3. The desktop
+extra now selects an earlier binding for Linux ARM64/Python below 3.12. This
+dependency workaround is being verified in the full test matrix. CI also reports
+a minimal native-widget reference-count probe to separate wheel failures from
+application behavior. No Python reference
 count manipulation or disabled accessibility is used.
 
 Free external providers were used for design research, vector icon implementation,
@@ -122,8 +124,8 @@ its verification and reconciled palette, DPI, spacing and status findings.
 
 GNOME, Xfce, Cinnamon, MATE,
 LXQt, physical ARM64 hardware, AMD/NVIDIA hardware and other laptop brands have
-not been physically tested for the new UI. The user's launcher has not been
-updated by the cloud continuation. Qt/backend compatibility and injected fixtures support
+not been physically tested for the new UI. The local continuation updated the
+user's launcher to 2.1.0. Qt/backend compatibility and injected fixtures support
 the design, but do not substitute for those live release checks.
 
 Use source installation on systems with incompatible bundle glibc/graphics
