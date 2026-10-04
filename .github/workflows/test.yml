@@ -11,6 +11,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install Qt runtime libraries
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libxcb-cursor0 desktop-file-utils
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -23,5 +25,4 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
       - run: python -m build
-      - run: sudo apt-get update && sudo apt-get install -y desktop-file-utils
       - run: desktop-file-validate assets/thinkpad-monitor.desktop

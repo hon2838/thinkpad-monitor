@@ -138,173 +138,16 @@ class SampleWorker(QtCore.QObject):
                 pass
 
 
-class SummaryCard(QtWidgets.QFrame):
-    def __init__(self, title, parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
-        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
-        lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(2)
-        self._title = QtWidgets.QLabel(title)
-        f = self._title.font()
-        f.setPointSizeF(max(8.0, f.pointSizeF() - 1.0))
-        self._title.setFont(f)
-        self._title.setWordWrap(True)
-        self._value = QtWidgets.QLabel(UNAVAILABLE)
-        vf = self._value.font()
-        vf.setPointSizeF(vf.pointSizeF() + 3.0)
-        vf.setBold(True)
-        self._value.setFont(vf)
-        self._value.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._value.setWordWrap(True)
-        self._detail = QtWidgets.QLabel("")
-        self._detail.setWordWrap(True)
-        self._detail.setVisible(False)
-        lay.addWidget(self._title)
-        lay.addWidget(self._value)
-        lay.addWidget(self._detail)
-    def set_value(self, value, detail=None):
-        self._value.setText(UNAVAILABLE if value is None else str(value))
-        if detail:
-            self._detail.setText(str(detail))
-            self._detail.setVisible(True)
-        else:
-            self._detail.setText("")
-            self._detail.setVisible(False)
-    @property
-    def value_text(self):
-        return self._value.text()
-
-
-class UsageBar(QtWidgets.QProgressBar):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setRange(0, 100)
-        self.setValue(0)
-        self._available = False
-    def set_usage(self, percent, text=None):
-        if percent is None:
-            self._available = False
-            self.setValue(0)
-            self.setFormat(UNAVAILABLE)
-            return
-        try:
-            v = max(0, min(100, int(round(float(percent)))))
-        except (TypeError, ValueError):
-            self._available = False
-            self.setFormat(UNAVAILABLE)
-            return
-        self._available = True
-        self.setValue(v)
-        self.setFormat(text or "%p%")
-    @property
-    def available(self):
-        return self._available
-
-
-class CpuGraph(QtWidgets.QWidget):
-    def __init__(self, parent=None, limit=CPU_HISTORY_LIMIT):
-        super().__init__(parent)
-        self._samples: list = []
-        self._limit = max(2, int(limit))
-        self.setMinimumHeight(110)
-        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
-        self.setAccessibleName("CPU usage history graph")
-    def append(self, percent):
-        if percent is None:
-            return
-        try:
-            v = float(percent)
-        except (TypeError, ValueError):
-            return
-        self._samples.append(max(0.0, min(100.0, v)))
-        if len(self._samples) > self._limit:
-            del self._samples[:len(self._samples) - self._limit]
-        self.update()
-    @property
-    def samples(self):
-        return list(self._samples)
-    def clear(self):
-        self._samples = []
-        self.update()
-    def sizeHint(self):
-        return QtCore.QSize(320, 120)
-    def paintEvent(self, event):
-        p = QtGui.QPainter(self)
-        try:
-            rect = self.rect()
-            pal = self.palette()
-            p.fillRect(rect, pal.base())
-            p.setPen(QtGui.QPen(pal.color(QtGui.QPalette.ColorRole.Mid)))
-            for pct in (0, 50, 100):
-                y = rect.bottom() - int(rect.height() * (pct / 100.0))
-                p.drawLine(rect.left(), y, rect.right(), y)
-            f = p.font()
-            f.setPointSizeF(max(7.0, f.pointSizeF() - 1.0))
-            p.setFont(f)
-            p.setPen(pal.color(QtGui.QPalette.ColorRole.Text))
-            p.drawText(2, rect.top() + 12, "100%")
-            p.drawText(2, rect.center().y() + 4, "50%")
-            p.drawText(2, rect.bottom() - 2, "0%")
-            if not self._samples:
-                p.drawText(rect.center().x() - 40, rect.center().y(), "No samples yet")
-                return
-            pl, pr = 34, max(35, rect.right() - 4)
-            pt, pb = rect.top() + 2, rect.bottom() - 2
-            span = max(1, pb - pt)
-            n = len(self._samples)
-            step = (pr - pl) / float(self._limit)
-            pts = [QtCore.QPointF(pl + (self._limit - n + i) * step,
-                                  pb - int(span * (v / 100.0)))
-                   for i, v in enumerate(self._samples)]
-            p.setPen(QtGui.QPen(pal.color(QtGui.QPalette.ColorRole.Highlight)))
-            path = QtGui.QPainterPath()
-            path.moveTo(pts[0])
-            for q in pts[1:]:
-                path.lineTo(q)
-            p.drawPath(path)
-        finally:
-            p.end()
-
-
-class DetailTable(QtWidgets.QTableWidget):
-    def __init__(self, headers, parent=None):
-        super().__init__(0, len(headers), parent)
-        self.setHorizontalHeaderLabels(list(headers))
-        self.verticalHeader().setVisible(False)
-        self.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
-        self.setAlternatingRowColors(True)
-        h = self.horizontalHeader()
-        h.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        h.setStretchLastSection(True)
-    def set_rows(self, rows):
-        safe = list(rows)
-        horizontal, vertical = self.horizontalScrollBar().value(), self.verticalScrollBar().value()
-        self.setUpdatesEnabled(False)
-        try:
-            self.setRowCount(len(safe))
-            for r, row in enumerate(safe):
-                for c in range(self.columnCount()):
-                    t = row[c] if c < len(row) else ""
-                    text = UNAVAILABLE if t is None else str(t)
-                    item = self.item(r, c)
-                    if item is None:
-                        item = QtWidgets.QTableWidgetItem(text)
-                        self.setItem(r, c, item)
-                    elif item.text() != text:
-                        item.setText(text)
-                    item.setToolTip(text)
-            self.horizontalScrollBar().setValue(horizontal)
-            self.verticalScrollBar().setValue(vertical)
-        finally:
-            self.setUpdatesEnabled(True)
+from .ui_components import SummaryCard, UsageBar, CpuGraph, DetailTable
 
 
 class MonitorWindow(QtWidgets.QMainWindow):
-    def __init__(self, collector=None, interval=2.0, parent=None):
+    def __init__(self, collector=None, interval=2.0, parent=None, settings=None):
         super().__init__(parent)
+        self._settings = settings
+        self._last_updated = None
+        self._page_descriptions = {}
+        self._shortcuts = []
         self._interval = max(0.25, float(interval))
         self._paused = False
         self._last_sample = None
@@ -313,7 +156,8 @@ class MonitorWindow(QtWidgets.QMainWindow):
         self._sampling = False
         self._close_pending = False
         self.setWindowTitle(DISPLAY_NAME)
-        self.resize(980, 720)
+        self.resize(1100, 800)
+        self.setMinimumSize(360, 360)
         if collector is None:
             from .telemetry import Collector
             collector = Collector()
@@ -321,129 +165,284 @@ class MonitorWindow(QtWidgets.QMainWindow):
         self._build_ui()
         self._build_worker()
         self._apply_interval()
+        self._freshness_timer = QtCore.QTimer(self)
+        self._freshness_timer.setInterval(1000)
+        self._freshness_timer.timeout.connect(self._update_status)
+        self._freshness_timer.start()
+        if self._settings is not None:
+            geometry = self._settings.value("window/geometry")
+            if isinstance(geometry, QtCore.QByteArray):
+                self.restoreGeometry(geometry)
+            try:
+                self._select_page(int(self._settings.value("window/page", 0)))
+            except (ValueError, TypeError):
+                pass
+        self._reflow()
         QtCore.QTimer.singleShot(0, self._tick)
     def _build_ui(self):
         central = QtWidgets.QWidget()
+        central.setObjectName("appShell")
         self.setCentralWidget(central)
         root = QtWidgets.QVBoxLayout(central)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(8)
-        hdr = QtWidgets.QHBoxLayout()
+        root.setContentsMargins(16, 16, 16, 12)
+        root.setSpacing(12)
+
+        heading = QtWidgets.QHBoxLayout()
         self._title_label = QtWidgets.QLabel(DISPLAY_NAME)
-        f = self._title_label.font()
-        f.setBold(True)
-        f.setPointSizeF(f.pointSizeF() + 2.0)
-        self._title_label.setFont(f)
-        hdr.addWidget(self._title_label)
-        hdr.addStretch(1)
-        self._status_label = QtWidgets.QLabel("Starting...")
-        hdr.addWidget(self._status_label)
-        root.addLayout(hdr)
-        hdr = QtWidgets.QHBoxLayout()
-        hdr.addStretch(1)
+        font = self._title_label.font()
+        font.setPointSizeF(font.pointSizeF() + 3)
+        font.setBold(True)
+        self._title_label.setFont(font)
+        self._title_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        heading.addWidget(self._title_label)
+        heading.addStretch()
+        self._status_label = QtWidgets.QLabel("Starting…")
+        self._status_label.setAccessibleName("Monitoring status")
+        self._status_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self._status_label.setWordWrap(True)
+        heading.addWidget(self._status_label)
+        root.addLayout(heading)
+
+        controls = QtWidgets.QHBoxLayout()
+        controls.setSpacing(8)
+        controls.addStretch(1)
+        self._page_picker = QtWidgets.QComboBox()
+        self._page_picker.setAccessibleName("Monitoring page")
+        self._page_picker.currentIndexChanged.connect(self._select_page)
+        controls.addWidget(self._page_picker, 1)
         self._pause_button = QtWidgets.QPushButton("Pause")
+        self._pause_button.setAccessibleName("Pause monitoring")
+        self._pause_button.setToolTip("Pause or resume monitoring (Ctrl+P)")
         self._pause_button.clicked.connect(self.toggle_pause)
-        hdr.addWidget(self._pause_button)
+        controls.addWidget(self._pause_button)
         self._refresh_button = QtWidgets.QPushButton("Refresh")
+        self._refresh_button.setAccessibleName("Refresh readings")
+        self._refresh_button.setToolTip("Collect readings now (Ctrl+R)")
         self._refresh_button.clicked.connect(self.refresh_now)
-        hdr.addWidget(self._refresh_button)
+        controls.addWidget(self._refresh_button)
         self._interval_combo = QtWidgets.QComboBox()
-        for s in (0.5, 1.0, 2.0, 5.0, 10.0):
-            self._interval_combo.addItem("%gs" % s, s)
-        self._interval_combo.setCurrentIndex(2)
+        for seconds in (0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0):
+            self._interval_combo.addItem("%g s" % seconds, seconds)
+        self._interval_combo.setAccessibleName("Refresh interval")
+        self._interval_combo.setToolTip("Time between collections")
         self._interval_combo.currentIndexChanged.connect(self._on_interval_changed)
-        self._interval_combo.setToolTip("Refresh interval")
-        hdr.addWidget(self._interval_combo)
-        root.addLayout(hdr)
+        controls.addWidget(self._interval_combo)
+        root.addLayout(controls)
+
+        content = QtWidgets.QHBoxLayout()
+        content.setSpacing(16)
+        self._navigation = QtWidgets.QListWidget()
+        self._navigation.setObjectName("navigation")
+        self._navigation.setAccessibleName("Monitoring pages")
+        self._navigation.setFixedWidth(166)
+        self._navigation.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._navigation.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._navigation.currentRowChanged.connect(self._select_page)
+        content.addWidget(self._navigation)
         self._tabs = QtWidgets.QTabWidget()
-        self._tabs.setDocumentMode(True)
-        root.addWidget(self._tabs, 1)
+        self._tabs.setObjectName("pages")
+        self._tabs.tabBar().hide()
+        self._tabs.currentChanged.connect(self._sync_navigation)
+        content.addWidget(self._tabs, 1)
+        root.addLayout(content, 1)
+
         self._build_summary_tab()
-        self._cpu_table = self._table_tab("CPU", ["Metric", "Value"])
-        self._mem_table = self._table_tab("Memory", ["Metric", "Value"])
-        self._storage_table = self._table_tab("Storage", ["Metric", "Value"])
-        self._battery_table = self._table_tab("Batteries", ["Name", "Status", "Charge", "Health", "Cycles", "Voltage", "Power", "Energy", "Remaining"])
-        self._net_table = self._table_tab("Networks", ["Interface", "Up", "Addresses", "RX/s", "TX/s", "RX total", "TX total"])
-        lay = self._add_scroll_tab("Thermals and Fans")
-        lay.addWidget(QtWidgets.QLabel("Temperatures"))
-        self._temp_table = DetailTable(["Sensor", "Label", "Temp", "Critical"])
-        lay.addWidget(self._temp_table)
-        lay.addWidget(QtWidgets.QLabel("Fans"))
+        self._cpu_table = self._table_tab("Processor", ["Metric", "Value"], "CPU activity, frequency and individual cores")
+        self._mem_table = self._table_tab("Memory", ["Metric", "Value"], "Memory available to apps and swap usage")
+        self._storage_table = self._table_tab("Storage", ["Metric", "Value"], "Root filesystem capacity and system disk activity")
+        self._battery_table = self._table_tab("Batteries", ["Name", "Status", "Charge", "Health", "Cycles", "Voltage", "Power", "Energy (Wh)", "Estimated time"], "Each battery pack, its health and power use")
+        self._net_table = self._table_tab("Network", ["Interface", "Connected", "Addresses", "Download", "Upload", "Received", "Sent"], "All interfaces and their measured transfer rates")
+        layout = self._add_scroll_tab("Thermals", "Temperatures and fan speeds reported by your device")
+        self._temp_table = DetailTable(["Sensor", "Label", "Temperature", "Critical limit"])
+        layout.addWidget(self._detail_panel("Temperatures", self._temp_table))
         self._fan_table = DetailTable(["Fan", "Label", "Speed"])
-        lay.addWidget(self._fan_table)
-        self._gpu_table = self._table_tab("GPUs", ["GPU", "Vendor", "Driver", "Busy", "Temp", "VRAM used", "VRAM total"])
-        self._power_table = self._table_tab("Power", ["Domain", "Watts"])
-        sys_lay = self._add_scroll_tab("System")
+        layout.addWidget(self._detail_panel("Cooling fans", self._fan_table))
+        self._gpu_table = self._table_tab("Graphics", ["GPU", "Vendor", "Driver", "Activity", "Temperature", "VRAM used", "VRAM total"], "Graphics devices and available driver readings")
+        self._power_table = self._table_tab("Power", ["Domain", "Measured watts"], "Actual sensor readings; availability depends on your hardware")
+        system_layout = self._add_scroll_tab("System", "Device information and sensor availability")
         self._system_table = DetailTable(["Field", "Value"])
-        sys_lay.addWidget(self._system_table)
-        sys_lay.addWidget(QtWidgets.QLabel("Warnings"))
+        system_layout.addWidget(self._detail_panel("Device", self._system_table))
         self._warnings_label = QtWidgets.QLabel("")
+        self._warnings_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self._warnings_label.setWordWrap(True)
-        self._warnings_label.setAccessibleName("Collection warnings")
-        sys_lay.addWidget(self._warnings_label)
-        sys_lay.addStretch(1)
-    def _add_scroll_tab(self, title):
+        self._warnings_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._warnings_label.setAccessibleName("Sensor availability details")
+        system_layout.addWidget(self._section_title("Sensor availability"))
+        system_layout.addWidget(self._warnings_label)
+        system_layout.addStretch()
+
+        self._notice_label = QtWidgets.QLabel("Readings stay on this device · no hardware settings are changed")
+        self._notice_label.setWordWrap(True)
+        self._notice_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self._notice_label.setAccessibleName("Monitoring information")
+        root.addWidget(self._notice_label)
+        self._install_shortcuts()
+        self._select_page(0)
+        self._apply_theme()
+
+    @staticmethod
+    def _section_title(text):
+        label = QtWidgets.QLabel(text)
+        label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        font = label.font()
+        font.setPointSizeF(font.pointSizeF() + 1)
+        font.setBold(True)
+        label.setFont(font)
+        return label
+
+    def _apply_theme(self):
+        self.setStyleSheet("""
+            QFrame#metricCard, QFrame#historyPanel, QFrame#detailPanel {
+                background: palette(base); border: 1px solid palette(mid);
+                border-radius: 12px;
+            }
+            QTabWidget#pages::pane { border: 0; }
+            QListWidget#navigation { border: 0; background: palette(window); }
+            QListWidget#navigation::item { padding: 10px 12px; margin: 2px;
+                border: 2px solid transparent; border-radius: 8px; }
+            QListWidget#navigation::item:selected { background: palette(highlight);
+                color: palette(highlighted-text); }
+            QListWidget#navigation::item:focus { border: 2px solid palette(text); }
+            QPushButton, QComboBox, QLineEdit { min-height: 28px; }
+        """)
+
+    def _add_scroll_tab(self, title, description=""):
         page = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(page)
-        lay.setContentsMargins(10, 10, 10, 10)
-        lay.setSpacing(8)
+        layout = QtWidgets.QVBoxLayout(page)
+        layout.setContentsMargins(4, 0, 4, 4)
+        layout.setSpacing(16)
+        layout.addWidget(self._section_title(title))
+        if description:
+            subtitle = QtWidgets.QLabel(description)
+            subtitle.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            subtitle.setWordWrap(True)
+            layout.addWidget(subtitle)
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         scroll.setWidget(page)
-        self._tabs.addTab(scroll, title)
-        return lay
-    def _table_tab(self, title, headers, extra_graph=False):
-        lay = self._add_scroll_tab(title)
+        scroll.setAccessibleName(title + " page")
+        index = self._tabs.addTab(scroll, title)
+        self._page_descriptions[index] = description
+        self._navigation.addItem(title)
+        self._page_picker.addItem(title)
+        return layout
+
+    def _detail_panel(self, title, table):
+        panel = QtWidgets.QFrame()
+        panel.setObjectName("detailPanel")
+        layout = QtWidgets.QVBoxLayout(panel)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        bar = QtWidgets.QHBoxLayout()
+        search = QtWidgets.QLineEdit()
+        search.setPlaceholderText("Filter " + title.lower())
+        search.setClearButtonEnabled(True)
+        search.setAccessibleName("Filter " + title.lower())
+        search.textChanged.connect(table.apply_filter)
+        table.setAccessibleName(title)
+        table.filter_edit = search
+        bar.addWidget(search, 1)
+        copy = QtWidgets.QPushButton("Copy rows")
+        copy.setAccessibleName("Copy selected " + title.lower() + " rows")
+        copy.setToolTip("Copy selected rows with column names (Ctrl+C)")
+        copy.clicked.connect(table.copy_selected)
+        bar.addWidget(copy)
+        layout.addLayout(bar)
+        layout.addWidget(table, 1)
+        table.setMinimumHeight(200)
+        return panel
+
+    def _table_tab(self, title, headers, description=""):
+        layout = self._add_scroll_tab(title, description)
         table = DetailTable(headers)
-        if extra_graph:
-            lay.addWidget(QtWidgets.QLabel("CPU usage history (most recent samples)"))
-            self._graph = CpuGraph()
-            lay.addWidget(self._graph)
-        lay.addWidget(table)
+        layout.addWidget(self._detail_panel(title, table), 1)
         return table
+
     def _build_summary_tab(self):
-        lay = self._add_scroll_tab("Summary")
-        hl = QtWidgets.QLabel("Host")
-        f = hl.font()
-        f.setBold(True)
-        hl.setFont(f)
-        lay.addWidget(hl)
-        self._host_value = QtWidgets.QLabel(UNAVAILABLE)
+        layout = self._add_scroll_tab("Overview", "A live view of your laptop’s activity and condition")
+        self._host_value = QtWidgets.QLabel("Discovering this device…")
         self._host_value.setWordWrap(True)
+        self._host_value.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self._host_value.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-        lay.addWidget(self._host_value)
-        grid = QtWidgets.QGridLayout()
-        self._summary_grid = grid
-        grid.setSpacing(10)
-        lay.addLayout(grid)
+        self._host_value.setAccessibleName("Device identity")
+        layout.addWidget(self._host_value)
+        self._summary_grid = QtWidgets.QGridLayout()
+        self._summary_grid.setSpacing(12)
+        layout.addLayout(self._summary_grid)
         self._cards = {}
-        for key, title in (("cpu", "CPU"), ("memory", "Memory"), ("battery", "Battery"), ("storage", "Storage"), ("temp", "Hottest Sensor"), ("net", "Network"), ("gpu", "GPU"), ("fan", "Fan")):
-            self._cards[key] = SummaryCard(title)
-        for i, key in enumerate(("cpu", "memory", "battery", "storage", "temp", "net", "gpu", "fan")):
-            grid.addWidget(self._cards[key], i // 4, i % 4)
-        for c in range(4):
-            grid.setColumnStretch(c, 1)
-        self._cpu_bar = UsageBar()
-        lay.addWidget(self._cpu_bar)
-        self._mem_bar = UsageBar()
-        lay.addWidget(self._mem_bar)
-        self._battery_bar = UsageBar()
-        lay.addWidget(self._battery_bar)
-        lay.addWidget(QtWidgets.QLabel("CPU history · latest 180 samples"))
+        titles = (("cpu", "Processor"), ("memory", "Memory"), ("battery", "Battery"),
+                  ("storage", "Storage"), ("temp", "Hottest sensor"), ("net", "Network"),
+                  ("gpu", "Graphics"), ("fan", "Cooling"))
+        for index, (key, title) in enumerate(titles):
+            card = SummaryCard(title)
+            card.setObjectName("metricCard")
+            card.bar.setTextVisible(False)
+            card.bar.setFixedHeight(8)
+            card.setAccessibleName(title + " summary")
+            self._cards[key] = card
+            self._summary_grid.addWidget(card, index // 4, index % 4)
+        self._cpu_bar = self._cards['cpu'].bar
+        self._mem_bar = self._cards['memory'].bar
+        self._battery_bar = self._cards['battery'].bar
+        for key in ('storage', 'temp', 'net', 'gpu', 'fan'):
+            self._cards[key].bar.hide()
+        panel = QtWidgets.QFrame()
+        panel.setObjectName("historyPanel")
+        graph_layout = QtWidgets.QVBoxLayout(panel)
+        graph_layout.setContentsMargins(20, 16, 20, 16)
+        graph_layout.addWidget(self._section_title("Processor activity"))
+        graph_layout.addWidget(QtWidgets.QLabel("Recent readings · gaps indicate paused or unavailable data"))
         self._graph = CpuGraph()
-        lay.addWidget(self._graph)
-        lay.addStretch(1)
+        graph_layout.addWidget(self._graph)
+        layout.addWidget(panel)
+        layout.addStretch()
+
+    def _select_page(self, index):
+        if hasattr(self, '_tabs') and 0 <= index < self._tabs.count():
+            self._tabs.setCurrentIndex(index)
+            self._sync_navigation(index)
+
+    def _sync_navigation(self, index):
+        for widget, setter in ((self._navigation, self._navigation.setCurrentRow),
+                               (self._page_picker, self._page_picker.setCurrentIndex)):
+            previous = widget.blockSignals(True)
+            setter(index)
+            widget.blockSignals(previous)
+
+    def _install_shortcuts(self):
+        for sequence, action in (("Ctrl+R", self.refresh_now), ("Ctrl+P", self.toggle_pause),
+                                 ("Ctrl+W", self.close), ("Ctrl+F", self._focus_filter),
+                                 ("Alt+Left", lambda: self._select_page(max(0, self._tabs.currentIndex() - 1))),
+                                 ("Alt+Right", lambda: self._select_page(min(self._tabs.count() - 1, self._tabs.currentIndex() + 1)))):
+            shortcut = QtGui.QShortcut(QtGui.QKeySequence(sequence), self)
+            shortcut.activated.connect(action)
+            self._shortcuts.append(shortcut)
+
+    def _focus_filter(self):
+        page = self._tabs.currentWidget()
+        search = page.findChild(QtWidgets.QLineEdit) if page is not None else None
+        if search is not None:
+            search.setFocus()
+            search.selectAll()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        grid = getattr(self, "_summary_grid", None)
-        if grid is None:
+        self._reflow()
+
+    def _reflow(self):
+        if not hasattr(self, '_summary_grid'):
             return
-        columns = 4 if self.width() >= 850 else 2 if self.width() >= 480 else 1
+        wide = self.width() >= 820
+        self._navigation.setVisible(wide)
+        self._page_picker.setVisible(not wide)
+        available = max(0, self.width() - (214 if wide else 44))
+        minimum = max(180, int(self.fontMetrics().horizontalAdvance("Unavailable") * 1.5))
+        columns = 4 if available >= 4 * minimum else 2 if available >= 2 * minimum else 1
         for column in range(4):
-            grid.setColumnStretch(column, 1 if column < columns else 0)
+            self._summary_grid.setColumnStretch(column, 1 if column < columns else 0)
         for index, key in enumerate(("cpu", "memory", "battery", "storage", "temp", "net", "gpu", "fan")):
-            grid.addWidget(self._cards[key], index // columns, index % columns)
+            self._summary_grid.addWidget(self._cards[key], index // columns, index % columns)
 
     def _build_worker(self):
         self._thread = QtCore.QThread(self)
@@ -473,7 +472,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
             return
         self._interval = max(0.25, float(data))
         self._apply_interval()
-        self._status_label.setText("Interval: %gs" % self._interval)
+        self._update_status()
         if not self._paused:
             self._tick()
     @property
@@ -492,18 +491,40 @@ class MonitorWindow(QtWidgets.QMainWindow):
     def cpu_history(self):
         return self._graph.samples
     def toggle_pause(self):
+        self._paused = not self._paused
+        self._pause_button.setText("Resume" if self._paused else "Pause")
+        self._pause_button.setAccessibleName("Resume monitoring" if self._paused else "Pause monitoring")
         if self._paused:
-            self._paused = False
-            self._pause_button.setText("Pause")
-            self._status_label.setText("Resumed")
-            self._tick()
+            self._timer.stop()
+            self._graph.gap()
         else:
-            self._paused = True
-            self._pause_button.setText("Resume")
-            self._status_label.setText("Paused")
+            self._tick()
+        self._update_status()
         return self._paused
+
+    def _update_status(self):
+        if self._shutting_down:
+            return
+        age = None if self._last_updated is None else max(0, time.monotonic() - self._last_updated)
+        if self._error:
+            status = "Collection failed"
+            detail = "Last readings may be stale · press Refresh to retry"
+        elif self._paused:
+            status = "Paused"
+            detail = "Automatic collection is paused"
+        elif age is None:
+            status = "Starting"
+            detail = "Discovering available sensors"
+        elif age > max(10, self._interval * 3):
+            status = "Waiting for readings"
+            detail = "Last collection %s ago" % fmt_duration(age)
+        else:
+            status = "Live"
+            detail = "Updated just now" if age < 2 else "Updated %s ago" % fmt_duration(age)
+        self._status_label.setText(status + " · " + detail)
+        self._status_label.setAccessibleDescription(status + ". " + detail)
+
     def refresh_now(self):
-        self._error = None
         self._request_sample()
     def _request_sample(self):
         if self._shutting_down or self._sampling:
@@ -523,12 +544,15 @@ class MonitorWindow(QtWidgets.QMainWindow):
             self._timer.start(int(self._interval * 1000))
     def _on_sample(self, sample):
         self._last_sample = sample
+        self._last_updated = time.monotonic()
         self._error = None
         self._render(sample)
-        self._status_label.setText("Updated")
+        self._update_status()
     def _on_failure(self, message):
         self._error = message
-        self._status_label.setText("Collection failed · readings may be stale")
+        self._graph.gap()
+        self._update_status()
+        self._notice_label.setText("Collection failed. Existing readings may be stale. Press Refresh to retry.")
         self._warnings_label.setText("Last collection failed: %s" % message)
     def _render(self, sample):
         system, cpu = _section(sample, "system"), _section(sample, "cpu")
@@ -537,7 +561,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
         bits = [t for t in ((_text(cpu["governor"]) if cpu.get("governor") is not None else UNAVAILABLE), (_text(cpu["driver"]) if cpu.get("driver") is not None else UNAVAILABLE)) if t != UNAVAILABLE]
         self._cards["cpu"].set_value(fmt_percent(cpu.get("percent")), " \u00b7 ".join(bits) if bits else None)
         self._cpu_bar.set_usage(cpu.get("percent"), "CPU · " + fmt_percent(cpu.get("percent")))
-        self._cards["memory"].set_value(fmt_percent(memory.get("percent")), "%s / %s" % (fmt_bytes(memory.get("used_bytes")), fmt_bytes(memory.get("total_bytes"))))
+        self._cards["memory"].set_value(fmt_percent(memory.get("percent")), "%s available of %s" % (fmt_bytes(memory.get("available_bytes")), fmt_bytes(memory.get("total_bytes"))))
         self._mem_bar.set_usage(memory.get("percent"), "Memory · " + fmt_percent(memory.get("percent")))
         self._cards["storage"].set_value(fmt_percent(storage.get("percent")), "%s / %s" % (fmt_bytes(storage.get("used_bytes")), fmt_bytes(storage.get("total_bytes"))))
         bats = [b for b in _as_list(sample.get("batteries")) if isinstance(b, dict)]
@@ -551,7 +575,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
                 detail = _text(bats[0].get("status"))
             else:
                 summary = " · ".join("%s %s" % (_text(b.get("name")), fmt_percent(b.get("percent"))) for b in bats)
-                detail = "%d batteries · see Batteries tab" % len(bats)
+                detail = "%d packs · shown individually" % len(bats)
                 if all(b.get("energy_wh") is not None and b.get("full_energy_wh") is not None for b in bats):
                     total = sum(b["full_energy_wh"] for b in bats)
                     percentage = 100 * sum(b["energy_wh"] for b in bats) / total if total > 0 else None
@@ -611,12 +635,19 @@ class MonitorWindow(QtWidgets.QMainWindow):
             self._cards["fan"].set_value(UNAVAILABLE, "No fan sensors" if not fans else None)
         else:
             self._cards["fan"].set_value(fmt_rpm(max(spd)), "%d sensor(s)" % len(spd))
-        self._graph.append(cpu.get("percent"))
+        self._graph.append(cpu.get("percent"), timestamp=self._last_updated)
         per_core, freqs, load = _as_list(cpu.get("per_core_percent")), _as_list(cpu.get("frequencies_mhz")), _as_list(cpu.get("load_average"))
-        self._cpu_table.set_rows([["Overall", fmt_percent(cpu.get("percent"))], ["Load average (1/5/15m)", ", ".join(fmt_num(x, 2) for x in load) if load else UNAVAILABLE], ["Governor", _text(cpu.get("governor"))], ["Scaling driver", _text(cpu.get("driver"))], ["Per-core load", ", ".join(fmt_percent(x) for x in per_core) if per_core else UNAVAILABLE], ["Frequencies (MHz)", ", ".join(fmt_mhz(x) for x in freqs) if freqs else UNAVAILABLE]])
+        cpu_rows = [["Overall activity", fmt_percent(cpu.get("percent"))],
+                    ["Load average (1 / 5 / 15 min)", ", ".join(fmt_num(x, 2) for x in load) if load else UNAVAILABLE],
+                    ["Governor", _text(cpu.get("governor"))], ["Scaling driver", _text(cpu.get("driver"))]]
+        for index in range(max(len(per_core), len(freqs))):
+            activity = per_core[index] if index < len(per_core) else None
+            frequency = freqs[index] if index < len(freqs) else None
+            cpu_rows.append(["Core %d" % index, "%s · %s" % (fmt_percent(activity), fmt_mhz(frequency))])
+        self._cpu_table.set_rows(cpu_rows)
         self._mem_table.set_rows([["Total", fmt_bytes(memory.get("total_bytes"))], ["Used", fmt_bytes(memory.get("used_bytes"))], ["Available", fmt_bytes(memory.get("available_bytes"))], ["Used %", fmt_percent(memory.get("percent"))], ["Swap total", fmt_bytes(memory.get("swap_total_bytes"))], ["Swap used", fmt_bytes(memory.get("swap_used_bytes"))], ["Swap %", fmt_percent(memory.get("swap_percent"))]])
         self._storage_table.set_rows([["Total", fmt_bytes(storage.get("total_bytes"))], ["Used", fmt_bytes(storage.get("used_bytes"))], ["Used %", fmt_percent(storage.get("percent"))], ["Read rate", fmt_rate(storage.get("read_bytes_per_second"))], ["Write rate", fmt_rate(storage.get("write_bytes_per_second"))]])
-        rows = [[_text(e.get("name")), _text(e.get("status")), fmt_percent(e.get("percent")), fmt_percent(e.get("health_percent")), fmt_int(e.get("cycles")), fmt_volts(e.get("voltage_volts")), fmt_watts(e.get("power_watts")), "%s / %s" % (fmt_num(e.get("energy_wh"), 1), fmt_num(e.get("full_energy_wh"), 1)), fmt_duration(e.get("time_remaining_seconds"))] for e in bats]
+        rows = [[_text(e.get("name")), _text(e.get("status")), fmt_percent(e.get("percent")), fmt_percent(e.get("health_percent")), fmt_int(e.get("cycles")), fmt_volts(e.get("voltage_volts")), fmt_watts(e.get("power_watts")), "%s / %s Wh" % (fmt_num(e.get("energy_wh"), 1), fmt_num(e.get("full_energy_wh"), 1)), fmt_duration(e.get("time_remaining_seconds"))] for e in bats]
         self._battery_table.set_rows(rows or [["No batteries detected"] + [""] * 8])
         nrows = []
         for e in nets:
@@ -628,13 +659,15 @@ class MonitorWindow(QtWidgets.QMainWindow):
         self._fan_table.set_rows([[_text(f.get("name")), _text(f.get("label")), fmt_rpm(f.get("rpm"))] for f in fans] or [["No fan sensors"] + [""] * 2])
         self._gpu_table.set_rows([[_text(g.get("name")), _text(g.get("vendor")), _text(g.get("driver")), fmt_percent(g.get("busy_percent")), fmt_celsius(g.get("temperature_celsius")), fmt_bytes(g.get("memory_used_bytes")), fmt_bytes(g.get("memory_total_bytes"))] for g in gpus] or [["No GPUs detected"] + [""] * 6])
         powers = [p for p in _as_list(sample.get("power")) if isinstance(p, dict)]
-        self._power_table.set_rows([[_text(p.get("name")), fmt_watts(p.get("watts"))] for p in powers] or [["No power sensors", ""]])
+        self._power_table.set_rows([[_text(p.get("name")), fmt_watts(p.get("watts"))] for p in powers] or [["No readable power sensor", "Unavailable"]])
         self._system_table.set_rows([["Hostname", _text(system.get("hostname"))], ["Model", _text(system.get("model"))], ["Architecture", _text(system.get("architecture"))], ["Kernel", _text(system.get("kernel"))], ["Uptime", fmt_duration(system.get("uptime_seconds"))], ["Profile", _text(system.get("platform_profile"))]])
         warns = _as_list(sample.get("warnings"))
-        self._warnings_label.setText("\n".join("- " + _text(w) for w in warns) if warns else "No warnings")
+        self._warnings_label.setText("\n".join("• " + _text(w) for w in warns) if warns else "All detected sensor files are readable. Some metrics may still be unavailable if the hardware does not provide them.")
+        self._notice_label.setText("Some sensor files cannot be read. See System for details." if warns else
+                                   "Readings stay on this device · no hardware settings are changed")
     def grab_preview(self, path=None):
         path = str(path or os.path.join(os.getcwd(), "laptop-monitor-preview.png"))
-        self._tabs.setCurrentIndex(0)
+        self._select_page(0)
         pix = self.grab()
         d = os.path.dirname(os.path.abspath(path))
         if d:
@@ -657,6 +690,12 @@ class MonitorWindow(QtWidgets.QMainWindow):
         if self._shutting_down:
             return
         self._shutting_down = True
+        if self._settings is not None:
+            self._settings.setValue("window/geometry", self.saveGeometry())
+            self._settings.setValue("window/page", self._tabs.currentIndex())
+            self._settings.setValue("monitor/interval", self._interval)
+        if hasattr(self, "_freshness_timer"):
+            self._freshness_timer.stop()
         try:
             self._timer.stop()
         except Exception:
@@ -750,7 +789,16 @@ def main(argv=None):
             return 1
         print("screenshot written to %s" % written)
         return 0
-    window = MonitorWindow(interval=args.interval)
+    settings = QtCore.QSettings("thinkpad-monitor", "Laptop Monitor")
+    interval = args.interval
+    if "--interval" not in argv:
+        try:
+            saved_interval = float(settings.value("monitor/interval", interval))
+            if 0.5 <= saved_interval <= 60:
+                interval = saved_interval
+        except (TypeError, ValueError):
+            pass
+    window = MonitorWindow(interval=interval, settings=settings)
     window.show()
     app.aboutToQuit.connect(window.shutdown)
     return int(app.exec())
