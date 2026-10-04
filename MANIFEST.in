@@ -1,0 +1,6 @@
+include LICENSE README.md requirements.txt install.sh
+recursive-include assets *.desktop *.svg
+recursive-include scripts *.sh *.py
+recursive-include bin *.sh
+recursive-include docs *.md *.png
+recursive-include tests *.py

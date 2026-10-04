@@ -1,44 +1,57 @@
-name: Build & Release Binary
-
+name: Build Linux Desktop Releases
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
   workflow_dispatch:
-
 permissions:
   contents: write
-
 jobs:
   build:
-    runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install Dependencies
+      - name: Install build dependencies
+        run: python -m pip install '.[desktop]' pyinstaller build
+      - name: Test source
+        run: python -m unittest discover -s tests -v
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - name: Build directory bundle
         run: |
-          python -m pip install --upgrade pip
-          pip install psutil pyinstaller
-
-      - name: Build Standalone Binary
+          printf 'from thinkpad_monitor.cli import main\nraise SystemExit(main())\n' > /tmp/laptop-monitor-entry.py
+          pyinstaller --noconfirm --onedir --name thinkpad-monitor --paths src --hidden-import thinkpad_monitor.desktop /tmp/laptop-monitor-entry.py
+          cp assets/thinkpad-monitor.desktop assets/thinkpad-monitor.svg dist/thinkpad-monitor/
+      - name: Verify bundled CLI and GUI
         run: |
-          pyinstaller --onefile --name thinkpad-monitor src/thinkpad_monitor/monitor.py
-
-      - name: Test Binary Execution
+          dist/thinkpad-monitor/thinkpad-monitor --version
+          dist/thinkpad-monitor/thinkpad-monitor --json
+          dist/thinkpad-monitor/thinkpad-monitor --smoke-test
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - name: Package
         run: |
-          chmod +x dist/thinkpad-monitor
-          ./dist/thinkpad-monitor --help 2>/dev/null || true
-
-      - name: Create Release and Upload Asset
-        uses: softprops/action-gh-release@v2
+          tar -C dist -czf thinkpad-monitor-linux-${{ matrix.arch }}.tar.gz thinkpad-monitor
+          sha256sum thinkpad-monitor-linux-${{ matrix.arch }}.tar.gz > thinkpad-monitor-linux-${{ matrix.arch }}.tar.gz.sha256
+          python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            thinkpad-monitor-linux-*.tar.gz*
+            dist/*.whl
+            dist/*.tar.gz
+      - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: dist/thinkpad-monitor
+          files: thinkpad-monitor-linux-*.tar.gz*
           generate_release_notes: true

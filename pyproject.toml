@@ -1,24 +1,24 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "thinkpad-monitor"
-version = "1.0.0"
-description = "Terminal hardware monitoring dashboard for Lenovo ThinkPad & ThinkBook laptops"
+version = "2.0.0"
+description = "Capability-aware Linux laptop monitor with native desktop and terminal interfaces"
 readme = "README.md"
 authors = [{ name = "Matthew Hon", email = "hon2838@gmail.com" }]
-license = { text = "MIT" }
-requires-python = ">=3.8"
+license = "MIT"
+requires-python = ">=3.9"
 dependencies = [
     "psutil>=5.8.0"
 ]
-keywords = ["thinkpad", "thinkbook", "hardware-monitor", "telemetry", "curses", "tui", "linux"]
+keywords = ["laptop", "thinkpad", "hardware-monitor", "telemetry", "desktop", "linux"]
 classifiers = [
     "Environment :: Console :: Curses",
+    "Environment :: X11 Applications :: Qt",
     "Intended Audience :: System Administrators",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Topic :: System :: Monitoring",
@@ -26,7 +26,15 @@ classifiers = [
 ]
 
 [project.scripts]
-thinkpad-monitor = "thinkpad_monitor.monitor:main"
+thinkpad-monitor = "thinkpad_monitor.cli:main"
+thinkpad-monitor-desktop = "thinkpad_monitor.cli:desktop_main"
+
+[project.optional-dependencies]
+desktop = ["PySide6>=6.6,<7; python_version >= '3.10'"]
+
+[tool.setuptools.data-files]
+"share/applications" = ["assets/thinkpad-monitor.desktop"]
+"share/icons/hicolor/scalable/apps" = ["assets/thinkpad-monitor.svg"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,10 +1,8 @@
-"""
-ThinkPad & ThinkBook Hardware Monitor
-A lightweight terminal-based telemetry dashboard for Lenovo laptops running Linux.
-"""
-
-from .monitor import main, monitor
-
-__version__ = "1.0.0"
+"""Read-only Linux laptop monitoring; optional native Qt desktop."""
+__version__ = "2.0.0"
 __author__ = "Matthew Hon"
-__all__ = ["main", "monitor", "__version__"]
+
+
+def main():
+    from .cli import main as run
+    return run()

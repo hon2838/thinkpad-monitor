@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# ThinkPad Hardware Monitor Launcher
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export PYTHONPATH="${SCRIPT_DIR}/src:${PYTHONPATH}"
-
-# Execute the curses TUI script
-python3 -m thinkpad_monitor
+set -euo pipefail
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="${ROOT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m thinkpad_monitor "$@"

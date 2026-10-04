@@ -1,9 +1,12 @@
 [Desktop Entry]
-Name=ThinkPad Hardware Monitor
-Comment=Terminal-based Hardware Telemetry & Monitor Dashboard
-Exec=thinkpad-monitor
-Icon=utilities-system-monitor
-Terminal=true
+Name=Laptop Monitor
+GenericName=Hardware Monitor
+Comment=CPU, memory, battery, network and thermal monitoring
+Exec=thinkpad-monitor --desktop
+TryExec=thinkpad-monitor
+Icon=thinkpad-monitor
+Terminal=false
 Type=Application
-Categories=System;Monitor;HardwareSettings;
-Keywords=thinkpad;thinkbook;hardware;monitor;sensors;fan;battery;gpu;cpu;
+Categories=System;Monitor;
+Keywords=laptop;thinkpad;hardware;monitor;sensors;fan;battery;gpu;cpu;
+StartupNotify=true
