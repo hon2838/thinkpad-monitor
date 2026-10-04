@@ -41,12 +41,72 @@ requirement. The original terminal remains explicitly optional for specialist us
 - [Desktop Exec quoting](https://specifications.freedesktop.org/desktop-entry/latest/exec-variables.html)
 - [psutil CPU measurements](https://psutil.readthedocs.io/en/latest/#psutil.cpu_percent)
 
+## Desktop UI continuation
+
+The overview uses system palette roles and inherited system fonts, with a sidebar
+on wide windows and a page selector on compact windows. Status moves below the
+title on compact windows. Cards choose columns from their font-dependent minimum
+sizes; descriptions wrap and pages scroll vertically. Wide device tables retain
+horizontal scrolling when all device columns cannot fit.
+
+Keyboard shortcuts: Ctrl+R refreshes, Ctrl+P pauses/resumes, Ctrl+F focuses the
+current detail filter, Ctrl+C copies visible selected table rows (or all visible
+rows when none are selected), Alt+Left/Right changes pages and Ctrl+W closes.
+The graph has a native keyboard focus indicator and a textual accessibility
+summary. Graph time uses a monotonic clock and labels the latest stored reading,
+not the current time; missing readings, failures and pause/resume break traces.
+Early subsecond spans remain visible. Actual unavailable values remain explicit;
+empty placeholder columns stay blank.
+
+Refresh interval precedence is explicit CLI option, saved setting, then 2 seconds.
+Both `--interval 5` and `--interval=5` override saved values. Terminal mode still
+defaults to 2 seconds. Table updates preserve multiple selected unique displayed
+names through reordering; duplicate names use occurrence order rather than a
+persistent hardware identifier.
+
+Guidance reviewed for these decisions:
+
+- [KDE navigation and layout](https://develop.kde.org/hig/layout_and_nav/)
+- [KDE accessibility](https://develop.kde.org/hig/accessibility/): system colors,
+  visible keyboard focus, enlarged fonts.
+- [GNOME adaptive layouts](https://developer.gnome.org/hig/guidelines/adaptive.html)
+- [GNOME windows](https://developer.gnome.org/hig/patterns/containers/windows.html)
+- [W3C visible focus](https://www.w3.org/WAI/WCAG22/Understanding/focus-visible)
+- [W3C status messages](https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html)
+
+These principles inform the implementation; they do not imply formal WCAG or
+screen-reader certification. See [validation](VALIDATION.md) for the headless
+checks and remaining desktop-session coverage.
+
 The kernel documents that hwmon attributes are optional and sensor meanings can
 vary by board. This app displays exported chip labels, avoiding assumptions that
 an arbitrary sensor is always the CPU. Direct sysfs access also cannot apply all
 libsensors board-specific configuration: specialized thermistor/voltage channels
 may require a future libsensors provider. Intel/NVIDIA load/VRAM are not invented
 when drivers expose no standard equivalent to AMD files.
+
+## Modern desktop styling (2.1)
+
+The desktop uses consistent rounded surfaces, system-relative type sizes,
+monochrome vector icons and native palette colours. The toolbar moves beside the
+title when its actual content fits and stacks when it does not. Device identity
+and metadata are separated from activity cards; hidden usage bars retain their
+layout space so cards align without showing invented readings. The graph uses
+subtle grid lines, an area gradient and a latest-reading marker, with native
+keyboard focus and timestamp-based axes.
+
+Runtime theme changes repolish stylesheet surfaces and refresh card colours after
+Qt propagates the palette. Muted text is composed against the real surface and
+falls back to a readable native-derived colour. Icons supplied to labels include
+physical pixels and device ratios for scaled displays. Compact status labels
+reserve enough height for wrapped text, including enlarged fonts.
+
+Further primary guidance:
+
+- [GNOME typography](https://developer.gnome.org/hig/guidelines/typography.html):
+  system fonts, relative sizes and a restrained hierarchy.
+- [GNOME UI styling](https://developer.gnome.org/hig/guidelines/ui-styling.html):
+  system light/dark styles, palette-based custom elements and high-contrast checks.
 
 ## Subagent work
 

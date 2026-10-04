@@ -184,38 +184,46 @@ class MonitorWindow(QtWidgets.QMainWindow):
         central.setObjectName("appShell")
         self.setCentralWidget(central)
         root = QtWidgets.QVBoxLayout(central)
-        root.setContentsMargins(16, 16, 16, 12)
-        root.setSpacing(12)
+        self._root_layout = root
+        root.setContentsMargins(20, 18, 20, 12)
+        root.setSpacing(16)
 
-        heading = QtWidgets.QHBoxLayout()
+        heading = QtWidgets.QGridLayout()
+        self._heading_layout = heading
         self._title_label = QtWidgets.QLabel(DISPLAY_NAME)
         font = self._title_label.font()
         font.setPointSizeF(font.pointSizeF() + 3)
         font.setBold(True)
         self._title_label.setFont(font)
         self._title_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        heading.addWidget(self._title_label)
-        heading.addStretch()
+        heading.addWidget(self._title_label, 0, 0)
+        heading.setColumnStretch(1, 1)
         self._status_label = QtWidgets.QLabel("Starting…")
+        self._status_label.setObjectName("statusBadge")
         self._status_label.setAccessibleName("Monitoring status")
         self._status_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self._status_label.setWordWrap(True)
-        heading.addWidget(self._status_label)
+        self._status_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                                         QtWidgets.QSizePolicy.Policy.Minimum)
+        heading.addWidget(self._status_label, 0, 1)
         root.addLayout(heading)
 
         controls = QtWidgets.QHBoxLayout()
+        self._controls_layout = controls
         controls.setSpacing(8)
         controls.addStretch(1)
         self._page_picker = QtWidgets.QComboBox()
         self._page_picker.setAccessibleName("Monitoring page")
         self._page_picker.currentIndexChanged.connect(self._select_page)
-        controls.addWidget(self._page_picker, 1)
+        root.addWidget(self._page_picker)
         self._pause_button = QtWidgets.QPushButton("Pause")
+        self._pause_button.setObjectName("pauseAction")
         self._pause_button.setAccessibleName("Pause monitoring")
         self._pause_button.setToolTip("Pause or resume monitoring (Ctrl+P)")
         self._pause_button.clicked.connect(self.toggle_pause)
         controls.addWidget(self._pause_button)
         self._refresh_button = QtWidgets.QPushButton("Refresh")
+        self._refresh_button.setObjectName("refreshAction")
         self._refresh_button.setAccessibleName("Refresh readings")
         self._refresh_button.setToolTip("Collect readings now (Ctrl+R)")
         self._refresh_button.clicked.connect(self.refresh_now)
@@ -230,15 +238,30 @@ class MonitorWindow(QtWidgets.QMainWindow):
         root.addLayout(controls)
 
         content = QtWidgets.QHBoxLayout()
-        content.setSpacing(16)
+        content.setSpacing(20)
+        self._sidebar = QtWidgets.QFrame()
+        self._sidebar.setObjectName("sidebar")
+        sidebar_layout = QtWidgets.QVBoxLayout(self._sidebar)
+        sidebar_layout.setContentsMargins(0, 10, 0, 12)
+        sidebar_layout.setSpacing(12)
+        navigation_title = self._section_title("Monitor")
+        navigation_title.setContentsMargins(14, 0, 0, 0)
+        sidebar_layout.addWidget(navigation_title)
         self._navigation = QtWidgets.QListWidget()
         self._navigation.setObjectName("navigation")
         self._navigation.setAccessibleName("Monitoring pages")
-        self._navigation.setFixedWidth(166)
+        self._navigation.setFixedWidth(180)
+        self._navigation.setIconSize(QtCore.QSize(20, 20))
+        self._navigation.setSpacing(2)
         self._navigation.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._navigation.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
         self._navigation.currentRowChanged.connect(self._select_page)
-        content.addWidget(self._navigation)
+        sidebar_layout.addWidget(self._navigation, 1)
+        sidebar_note = QtWidgets.QLabel("On this device")
+        sidebar_note.setObjectName("secondaryText")
+        sidebar_note.setContentsMargins(14, 0, 0, 0)
+        sidebar_layout.addWidget(sidebar_note)
+        content.addWidget(self._sidebar)
         self._tabs = QtWidgets.QTabWidget()
         self._tabs.setObjectName("pages")
         self._tabs.tabBar().hide()
@@ -271,7 +294,9 @@ class MonitorWindow(QtWidgets.QMainWindow):
         system_layout.addWidget(self._warnings_label)
         system_layout.addStretch()
 
-        self._notice_label = QtWidgets.QLabel("Readings stay on this device · no hardware settings are changed")
+        self._notice_label = QtWidgets.QLabel("Local, read-only monitoring")
+        self._notice_label.setToolTip("Readings stay on this device. No hardware settings are changed.")
+        self._notice_label.setObjectName("secondaryText")
         self._notice_label.setWordWrap(True)
         self._notice_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self._notice_label.setAccessibleName("Monitoring information")
@@ -291,27 +316,89 @@ class MonitorWindow(QtWidgets.QMainWindow):
         return label
 
     def _apply_theme(self):
+        self._applying_theme = True
         self.setStyleSheet("""
             QFrame#metricCard, QFrame#historyPanel, QFrame#detailPanel {
-                background: palette(base); border: 1px solid palette(mid);
-                border-radius: 12px;
+                background: palette(base); border: 1px solid palette(midlight);
+                border-radius: 14px;
             }
+            QFrame#deviceBanner { background: palette(base);
+                border: 1px solid palette(midlight); border-radius: 14px; }
             QTabWidget#pages::pane { border: 0; }
+            QFrame#sidebar { background: transparent; border: 0; }
             QListWidget#navigation { border: 0; background: palette(window); }
-            QListWidget#navigation::item { padding: 10px 12px; margin: 2px;
+            QListWidget#navigation::item { padding: 10px 8px; margin: 0 2px;
                 border: 2px solid transparent; border-radius: 8px; }
+            QListWidget#navigation::item:hover { background: palette(alternate-base); }
             QListWidget#navigation::item:selected { background: palette(highlight);
                 color: palette(highlighted-text); }
             QListWidget#navigation::item:focus { border: 2px solid palette(text); }
-            QPushButton, QComboBox, QLineEdit { min-height: 28px; }
+            QPushButton, QComboBox, QLineEdit { min-height: 30px; }
+            QLabel#statusBadge { background: palette(base); padding: 6px 10px;
+                border: 1px solid palette(midlight); border-radius: 9px; }
+            QProgressBar#SummaryCardBar { background: palette(alternate-base);
+                border: 0; border-radius: 3px; }
+            QProgressBar#SummaryCardBar::chunk { background: palette(highlight);
+                border-radius: 3px; }
+            QTableWidget#DetailTable { border: 0; background: palette(base);
+                alternate-background-color: palette(alternate-base); }
         """)
+        self._refresh_icons()
+        self._applying_theme = False
+        QtCore.QTimer.singleShot(0, self._settle_theme)
+
+    def _settle_theme(self):
+        if self._shutting_down:
+            return
+        for card in self._cards.values():
+            card._apply_card_style()
+        self._refresh_icons()
+        self._fit_status()
+
+    def _refresh_icons(self):
+        from .ui_icons import icon
+        palette = self.palette()
+        names = ("overview", "cpu", "memory", "storage", "battery", "network",
+                 "thermals", "gpu", "power", "system")
+        for index, name in enumerate(names):
+            self._navigation.item(index).setIcon(icon(name, palette))
+            self._page_picker.setItemIcon(index, icon(name, palette))
+        for key, name in (("cpu", "cpu"), ("memory", "memory"), ("battery", "battery"),
+                          ("storage", "storage"), ("temp", "thermals"), ("net", "network"),
+                          ("gpu", "gpu"), ("fan", "fan")):
+            if hasattr(self._cards[key], "set_icon"):
+                self._cards[key].set_icon(icon(name, palette))
+        compact = self.width() < 520
+        self._pause_button.setIcon(QtGui.QIcon() if compact else icon("resume" if self._paused else "pause", palette))
+        self._refresh_button.setIcon(QtGui.QIcon() if compact else icon("refresh", palette))
+        for button in self.findChildren(QtWidgets.QPushButton, "copyAction"):
+            button.setIcon(icon("copy", palette, 16))
+        ratio = self.devicePixelRatioF()
+        pixmap = icon("laptop", palette, 32).pixmap(
+            QtCore.QSize(round(32 * ratio), round(32 * ratio)), 1.0)
+        pixmap.setDevicePixelRatio(ratio)
+        self._device_icon.setPixmap(pixmap)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if not hasattr(self, "_device_icon") or getattr(self, "_applying_theme", False):
+            return
+        if event.type() in (QtCore.QEvent.Type.ApplicationPaletteChange, QtCore.QEvent.Type.PaletteChange):
+            self._apply_theme()
+        elif event.type() in (QtCore.QEvent.Type.FontChange, QtCore.QEvent.Type.ApplicationFontChange):
+            self._reflow()
+            QtCore.QTimer.singleShot(0, self._fit_status)
 
     def _add_scroll_tab(self, title, description=""):
         page = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(page)
         layout.setContentsMargins(4, 0, 4, 4)
-        layout.setSpacing(16)
-        layout.addWidget(self._section_title(title))
+        layout.setSpacing(14)
+        page_title = self._section_title(title)
+        title_font = page_title.font()
+        title_font.setPointSizeF(title_font.pointSizeF() + 3)
+        page_title.setFont(title_font)
+        layout.addWidget(page_title)
         if description:
             subtitle = QtWidgets.QLabel(description)
             subtitle.setTextFormat(QtCore.Qt.TextFormat.PlainText)
@@ -344,6 +431,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
         table.filter_edit = search
         bar.addWidget(search, 1)
         copy = QtWidgets.QPushButton("Copy rows")
+        copy.setObjectName("copyAction")
         copy.setAccessibleName("Copy selected " + title.lower() + " rows")
         copy.setToolTip("Copy selected rows with column names (Ctrl+C)")
         copy.clicked.connect(table.copy_selected)
@@ -366,9 +454,30 @@ class MonitorWindow(QtWidgets.QMainWindow):
         self._host_value.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self._host_value.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         self._host_value.setAccessibleName("Device identity")
-        layout.addWidget(self._host_value)
+        identity_font = self._host_value.font()
+        identity_font.setBold(True)
+        self._host_value.setFont(identity_font)
+        self._device_banner = QtWidgets.QFrame()
+        self._device_banner.setObjectName("deviceBanner")
+        device_layout = QtWidgets.QHBoxLayout(self._device_banner)
+        device_layout.setContentsMargins(16, 12, 16, 12)
+        device_layout.setSpacing(14)
+        self._device_icon = QtWidgets.QLabel()
+        self._device_icon.setFixedSize(32, 32)
+        self._device_icon.setAccessibleName("")
+        device_layout.addWidget(self._device_icon)
+        device_text = QtWidgets.QVBoxLayout()
+        device_text.setSpacing(4)
+        device_text.addWidget(self._host_value)
+        self._device_detail = QtWidgets.QLabel("Discovering available sensors")
+        self._device_detail.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self._device_detail.setWordWrap(True)
+        self._device_detail.setObjectName("secondaryText")
+        device_text.addWidget(self._device_detail)
+        device_layout.addLayout(device_text, 1)
+        layout.addWidget(self._device_banner)
         self._summary_grid = QtWidgets.QGridLayout()
-        self._summary_grid.setSpacing(12)
+        self._summary_grid.setSpacing(14)
         layout.addLayout(self._summary_grid)
         self._cards = {}
         titles = (("cpu", "Processor"), ("memory", "Memory"), ("battery", "Battery"),
@@ -378,7 +487,10 @@ class MonitorWindow(QtWidgets.QMainWindow):
             card = SummaryCard(title)
             card.setObjectName("metricCard")
             card.bar.setTextVisible(False)
-            card.bar.setFixedHeight(8)
+            card.bar.setFixedHeight(6)
+            bar_policy = card.bar.sizePolicy()
+            bar_policy.setRetainSizeWhenHidden(True)
+            card.bar.setSizePolicy(bar_policy)
             card.setAccessibleName(title + " summary")
             self._cards[key] = card
             self._summary_grid.addWidget(card, index // 4, index % 4)
@@ -390,13 +502,14 @@ class MonitorWindow(QtWidgets.QMainWindow):
         panel = QtWidgets.QFrame()
         panel.setObjectName("historyPanel")
         graph_layout = QtWidgets.QVBoxLayout(panel)
-        graph_layout.setContentsMargins(20, 16, 20, 16)
+        graph_layout.setContentsMargins(20, 12, 20, 12)
         graph_layout.addWidget(self._section_title("Processor activity"))
-        graph_layout.addWidget(QtWidgets.QLabel("Recent readings · gaps indicate paused or unavailable data"))
+        history_description = QtWidgets.QLabel("Recent readings · gaps indicate paused or unavailable data")
+        history_description.setWordWrap(True)
+        graph_layout.addWidget(history_description)
         self._graph = CpuGraph()
-        graph_layout.addWidget(self._graph)
-        layout.addWidget(panel)
-        layout.addStretch()
+        graph_layout.addWidget(self._graph, 1)
+        layout.addWidget(panel, 1)
 
     def _select_page(self, index):
         if hasattr(self, '_tabs') and 0 <= index < self._tabs.count():
@@ -434,11 +547,38 @@ class MonitorWindow(QtWidgets.QMainWindow):
         if not hasattr(self, '_summary_grid'):
             return
         wide = self.width() >= 820
+        self._status_label.setWordWrap(not wide)
+        header_width = (self._title_label.sizeHint().width() +
+                        self._status_label.fontMetrics().horizontalAdvance(self._status_label.text()) +
+                        sum(control.sizeHint().width() for control in
+                            (self._pause_button, self._refresh_button, self._interval_combo)) + 72)
+        inline_actions = wide and self.width() - 40 >= header_width
+        if getattr(self, "_inline_actions", None) != inline_actions:
+            self._inline_actions = inline_actions
+            self._root_layout.removeItem(self._controls_layout)
+            self._heading_layout.removeItem(self._controls_layout)
+            self._controls_layout.setParent(None)
+            if inline_actions:
+                self._heading_layout.addLayout(self._controls_layout, 0, 2)
+            else:
+                self._root_layout.insertLayout(2, self._controls_layout)
+        compact_actions = self.width() < 520
+        if getattr(self, "_compact_actions", None) != compact_actions:
+            self._compact_actions = compact_actions
+            self._refresh_icons()
+        self._heading_layout.addWidget(self._status_label, 0 if wide else 1,
+                                       1 if wide else 0, 1, 1 if wide else 2,
+                                       QtCore.Qt.AlignmentFlag.AlignRight if wide else QtCore.Qt.AlignmentFlag.AlignLeft)
+        self._fit_status()
+        self._sidebar.setVisible(wide)
         self._navigation.setVisible(wide)
         self._page_picker.setVisible(not wide)
-        available = max(0, self.width() - (214 if wide else 44))
-        minimum = max(180, int(self.fontMetrics().horizontalAdvance("Unavailable") * 1.5))
-        columns = 4 if available >= 4 * minimum else 2 if available >= 2 * minimum else 1
+        # Allow page margins, a vertical scrollbar and grid gaps. Card fonts
+        # grow independently of the window font, so use their actual hints.
+        available = max(0, self.width() - (276 if wide else 84))
+        minimum = max(180, *(card.minimumSizeHint().width() for card in self._cards.values()))
+        spacing = self._summary_grid.horizontalSpacing()
+        columns = 4 if available >= 4 * minimum + 3 * spacing else 2 if available >= 2 * minimum + spacing else 1
         for column in range(4):
             self._summary_grid.setColumnStretch(column, 1 if column < columns else 0)
         for index, key in enumerate(("cpu", "memory", "battery", "storage", "temp", "net", "gpu", "fan")):
@@ -494,6 +634,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
         self._paused = not self._paused
         self._pause_button.setText("Resume" if self._paused else "Pause")
         self._pause_button.setAccessibleName("Resume monitoring" if self._paused else "Pause monitoring")
+        self._refresh_icons()
         if self._paused:
             self._timer.stop()
             self._graph.gap()
@@ -523,6 +664,19 @@ class MonitorWindow(QtWidgets.QMainWindow):
             detail = "Updated just now" if age < 2 else "Updated %s ago" % fmt_duration(age)
         self._status_label.setText(status + " · " + detail)
         self._status_label.setAccessibleDescription(status + ". " + detail)
+        self._fit_status()
+        self._reflow()
+
+    def _fit_status(self):
+        if not hasattr(self, "_status_label"):
+            return
+        compact = self.width() < 820
+        width = max(1, self.width() - 40)
+        self._status_label.setMinimumWidth(width if compact else 0)
+        metrics = self._status_label.fontMetrics()
+        height = metrics.boundingRect(QtCore.QRect(0, 0, width - 20, 10000),
+            QtCore.Qt.TextFlag.TextWordWrap, self._status_label.text()).height() if compact else metrics.height()
+        self._status_label.setMinimumHeight(height + 12)
 
     def refresh_now(self):
         self._request_sample()
@@ -557,7 +711,10 @@ class MonitorWindow(QtWidgets.QMainWindow):
     def _render(self, sample):
         system, cpu = _section(sample, "system"), _section(sample, "cpu")
         memory, storage = _section(sample, "memory"), _section(sample, "storage")
-        self._host_value.setText("%s \u2014 %s (%s)" % (_text(system.get("hostname")), _text(system.get("model")), _text(system.get("architecture"))))
+        self._host_value.setText("%s \u2014 %s" % (_text(system.get("hostname")), _text(system.get("model"))))
+        self._device_detail.setText("%s · Kernel %s · %s" % (
+            _text(system.get("architecture")), _text(system.get("kernel")),
+            _text(system.get("platform_profile")) if system.get("platform_profile") else "Device readings"))
         bits = [t for t in ((_text(cpu["governor"]) if cpu.get("governor") is not None else UNAVAILABLE), (_text(cpu["driver"]) if cpu.get("driver") is not None else UNAVAILABLE)) if t != UNAVAILABLE]
         self._cards["cpu"].set_value(fmt_percent(cpu.get("percent")), " \u00b7 ".join(bits) if bits else None)
         self._cpu_bar.set_usage(cpu.get("percent"), "CPU · " + fmt_percent(cpu.get("percent")))
@@ -664,7 +821,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
         warns = _as_list(sample.get("warnings"))
         self._warnings_label.setText("\n".join("• " + _text(w) for w in warns) if warns else "All detected sensor files are readable. Some metrics may still be unavailable if the hardware does not provide them.")
         self._notice_label.setText("Some sensor files cannot be read. See System for details." if warns else
-                                   "Readings stay on this device · no hardware settings are changed")
+                                   "Local, read-only monitoring")
     def grab_preview(self, path=None):
         path = str(path or os.path.join(os.getcwd(), "laptop-monitor-preview.png"))
         self._select_page(0)
@@ -762,10 +919,22 @@ def capture_screenshot(path, collector=None):
 def build_parser():
     p = argparse.ArgumentParser(prog="laptop-monitor", description="%s desktop dashboard" % DISPLAY_NAME)
     from .cli import refresh_interval
-    p.add_argument("--interval", type=refresh_interval, default=2.0, help="Refresh interval in seconds (default: 2.0)")
+    p.add_argument("--interval", type=refresh_interval, default=None, help="Refresh interval in seconds (default: saved setting or 2.0)")
     p.add_argument("--smoke-test", action="store_true", help="Run an offscreen self-test and exit")
     p.add_argument("--screenshot", metavar="PATH", default=None, help="Render one frame to a PNG file at PATH and exit")
     return p
+
+def _settings_interval(args, settings):
+    if args.interval is not None:
+        return args.interval
+    try:
+        saved = float(settings.value("monitor/interval", 2.0))
+        if 0.5 <= saved <= 60:
+            return saved
+    except (TypeError, ValueError):
+        pass
+    return 2.0
+
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -790,15 +959,7 @@ def main(argv=None):
         print("screenshot written to %s" % written)
         return 0
     settings = QtCore.QSettings("thinkpad-monitor", "Laptop Monitor")
-    interval = args.interval
-    if "--interval" not in argv:
-        try:
-            saved_interval = float(settings.value("monitor/interval", interval))
-            if 0.5 <= saved_interval <= 60:
-                interval = saved_interval
-        except (TypeError, ValueError):
-            pass
-    window = MonitorWindow(interval=interval, settings=settings)
+    window = MonitorWindow(interval=_settings_interval(args, settings), settings=settings)
     window.show()
     app.aboutToQuit.connect(window.shutdown)
     return int(app.exec())

@@ -75,11 +75,17 @@ class FakeCollector:
         return self._sample
 
 
+_app = None
+
+
 def ensure_app():
-    app = QtWidgets.QApplication.instance()
-    if app is None:
-        app = QtWidgets.QApplication([])
-    return app
+    # Retain Python ownership for the whole suite, including setUpClass callers
+    # that discard the return value. Widgets must outlive no QApplication.
+    global _app
+    _app = QtWidgets.QApplication.instance()
+    if _app is None:
+        _app = QtWidgets.QApplication([])
+    return _app
 
 
 def wait_for(predicate, timeout=10.0, app=None):

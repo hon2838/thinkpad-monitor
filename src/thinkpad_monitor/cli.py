@@ -26,7 +26,7 @@ def main(argv=None):
     modes.add_argument("--tui", action="store_true", help="use the generic terminal dashboard")
     modes.add_argument("--legacy-tui", action="store_true", help="original specialist ThinkPad/AMD dashboard")
     modes.add_argument("--json", action="store_true", help="print a telemetry snapshot without a display")
-    parser.add_argument("--interval", type=refresh_interval, default=2.0, help="refresh seconds (0.5–60)")
+    parser.add_argument("--interval", type=refresh_interval, default=None, help="refresh seconds (0.5–60; desktop remembers its last setting, terminal defaults to 2)")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--smoke-test", action="store_true", help="validate desktop offscreen and exit")
     parser.add_argument("--screenshot", metavar="PATH", help="capture desktop preview offscreen and exit")
@@ -60,7 +60,7 @@ def main(argv=None):
             print("Desktop support needs Python 3.10 or newer.", file=sys.stderr)
             return 2
         from .desktop import main as desktop
-        desktop_args = ["--interval", str(args.interval)]
+        desktop_args = [] if args.interval is None else ["--interval", str(args.interval)]
         if args.smoke_test:
             desktop_args.append("--smoke-test")
         if args.screenshot:
@@ -69,7 +69,7 @@ def main(argv=None):
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.error("no interactive terminal detected; use --json")
     from .tui import main as terminal
-    terminal(interval=args.interval)
+    terminal(interval=2.0 if args.interval is None else args.interval)
     return 0
 
 

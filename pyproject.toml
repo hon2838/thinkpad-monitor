@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "thinkpad-monitor"
-version = "2.0.0"
+version = "2.1.0"
 description = "Capability-aware Linux laptop monitor with native desktop and terminal interfaces"
 readme = "README.md"
 authors = [{ name = "Matthew Hon", email = "hon2838@gmail.com" }]

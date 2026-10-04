@@ -3,10 +3,12 @@ import math
 import os
 import time
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from test_desktop import ensure_app
 
 from thinkpad_monitor import ui_components
 from thinkpad_monitor.ui_components import (
@@ -17,13 +19,6 @@ from thinkpad_monitor.ui_components import (
     SummaryCard,
     UsageBar,
 )
-
-
-def ensure_app():
-    app = QtWidgets.QApplication.instance()
-    if app is None:
-        app = QtWidgets.QApplication([])
-    return app
 
 
 class ExportsTest(unittest.TestCase):
@@ -157,6 +152,59 @@ class CpuGraphTest(unittest.TestCase):
         finally:
             g.deleteLater()
 
+    def test_monotonic_defaults_and_truthful_axis(self):
+        g = CpuGraph()
+        try:
+            with patch.object(ui_components.time, "monotonic", return_value=100.0):
+                g.append(10)
+            self.assertEqual(g.timestamps, [100.0])
+            self.assertEqual(g.time_labels(), ("1 reading", "", "", "latest"))
+            g.append(20, timestamp=100.25)
+            self.assertEqual(g.time_labels(), ("span 0.25s", "−0.25s", "−0.125s", "latest"))
+            g.gap()
+            self.assertEqual(g.time_labels()[-1], "latest")
+            g.resize(360, 200)
+            g.show()
+            g.setFocus(QtCore.Qt.FocusReason.TabFocusReason)
+            ensure_app().processEvents()
+            self.assertTrue(g.hasFocus())
+            self.assertFalse(g.grab().isNull())
+        finally:
+            g.deleteLater()
+
+    def test_zero_duration_points_and_native_focus_paint(self):
+        app = ensure_app()
+        old_style = app.style().objectName()
+        app.setStyle("Fusion")
+        g = CpuGraph()
+        try:
+            g.append(10, timestamp=100)
+            self.assertEqual(g._time_fraction(100), 1.0)
+            g.append(20, timestamp=100)
+            self.assertEqual(g._time_fraction(100), 1.0)
+            self.assertEqual(g.time_labels(), ("span 0s", "", "", "latest"))
+            g.append(30, timestamp=101)
+            self.assertEqual(g._time_fraction(100), 0.0)
+            self.assertEqual(g._time_fraction(101), 1.0)
+            g.resize(360, 200)
+            g.show()
+            app.processEvents()
+            g.clearFocus()
+            app.processEvents()
+            self.assertFalse(g.hasFocus())
+            unfocused = g.grab().toImage()
+            g.setFocus(QtCore.Qt.FocusReason.TabFocusReason)
+            app.processEvents()
+            self.assertTrue(g.hasFocus())
+            focused = g.grab().toImage()
+            # The perimeter must visibly change under the native Fusion style.
+            changed = sum(unfocused.pixel(x, y) != focused.pixel(x, y)
+                          for y in range(5) for x in range(g.width()))
+            self.assertGreater(changed, 20)
+        finally:
+            g.deleteLater()
+            app.setStyle(old_style)
+
     def test_names_paint_accessible(self):
         g = CpuGraph()
         try:
@@ -199,7 +247,7 @@ class DetailTableTest(unittest.TestCase):
                 table.editTriggers(),
                 QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers,
             )
-            self.assertEqual(table.verticalHeader().defaultSectionSize(), 32)
+            self.assertGreaterEqual(table.verticalHeader().defaultSectionSize(), table.fontMetrics().height() + 12)
             table.set_rows([[None, float("nan")], ["x", float("inf")]])
             self.assertEqual(table.item(0, 0).text(), UNAVAILABLE)
             self.assertEqual(table.item(0, 1).text(), UNAVAILABLE)
@@ -222,6 +270,39 @@ class DetailTableTest(unittest.TestCase):
             self.assertEqual(table.item(0, 0).text(), "a")
             self.assertEqual(table.item(1, 1).text(), "CHANGED")
             self.assertGreaterEqual(vbar.maximum(), 0)
+        finally:
+            table.deleteLater()
+
+    def test_generator_headers_multi_selection_and_font(self):
+        table = DetailTable(name for name in ("K", "V"))
+        try:
+            table.set_rows([["a", "1"], ["b", "2"], ["c", "3"]])
+            selection = table.selectionModel()
+            flags = (QtCore.QItemSelectionModel.SelectionFlag.Select
+                     | QtCore.QItemSelectionModel.SelectionFlag.Rows)
+            selection.select(table.model().index(0, 0), flags)
+            selection.select(table.model().index(2, 0), flags)
+            table.setCurrentCell(1, 0, QtCore.QItemSelectionModel.SelectionFlag.NoUpdate)
+            table.set_rows([["a", "4"], ["b", "5"], ["c", "6"]])
+            self.assertEqual({i.row() for i in selection.selectedRows()}, {0, 2})
+            self.assertEqual(table.currentRow(), 1)
+            self.assertEqual(table.copy_selected(), "K\tV\na\t4\nc\t6")
+            table.set_rows([["c", "7"], ["b", "8"], ["a", "9"]])
+            self.assertEqual(table.copy_selected(), "K\tV\nc\t7\na\t9")
+            table.set_rows([["b", "8"], ["a", "9"]])
+            self.assertEqual(table.copy_selected(), "K\tV\na\t9")
+            table.setCurrentCell(0, 0, QtCore.QItemSelectionModel.SelectionFlag.NoUpdate)
+            table.set_rows([["a", "10"]])
+            self.assertEqual(table.currentRow(), -1)
+            self.assertEqual(table.copy_selected(), "K\tV\na\t10")
+            font = table.font()
+            font.setPointSize(24)
+            table.setFont(font)
+            self.assertGreaterEqual(table.verticalHeader().defaultSectionSize(),
+                                    table.fontMetrics().height() + 12)
+            table.set_rows([["No sensors", ""], ["sensor", None]])
+            self.assertEqual(table.item(0, 1).text(), "")
+            self.assertEqual(table.item(1, 1).text(), UNAVAILABLE)
         finally:
             table.deleteLater()
 

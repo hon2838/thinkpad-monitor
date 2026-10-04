@@ -6,7 +6,8 @@ import unittest
 from unittest.mock import patch
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
-from thinkpad_monitor.desktop import MonitorWindow
+from thinkpad_monitor.desktop import MonitorWindow, build_parser, _settings_interval
+from thinkpad_monitor import cli
 from test_desktop import FakeCollector, ensure_app, make_sample, wait_for
 
 
@@ -89,6 +90,31 @@ class DesignTests(unittest.TestCase):
         self.assertEqual(window._cpu_table.item(35, 0).text(), 'Core 31')
         self.assertIn('31%', window._cpu_table.item(35, 1).text())
 
+    def test_compact_controls_fit_enlarged_system_font(self):
+        previous = self.app.font()
+        enlarged = QtGui.QFont(previous)
+        enlarged.setPointSize(14)
+        self.app.setFont(enlarged)
+        try:
+            window = self.window()
+            window.resize(360, 640)
+            window.show()
+            window._on_sample(make_sample())
+            self.app.processEvents()
+            self.assertEqual(window.width(), 360)
+            self.assertGreater(window._status_label.y(), window._title_label.y())
+            self.assertLess(window._page_picker.y(), window._pause_button.y())
+            for control in (window._page_picker, window._pause_button, window._refresh_button,
+                            window._interval_combo):
+                self.assertLessEqual(control.geometry().right(), window.width())
+            overview = window._tabs.currentWidget()
+            for width in (360, 480):
+                window.resize(width, 640)
+                self.app.processEvents()
+                self.assertEqual(overview.horizontalScrollBar().maximum(), 0)
+        finally:
+            self.app.setFont(previous)
+
     def test_graph_breaks_on_pause_and_collection_failure(self):
         window = self.window()
         window._on_sample(make_sample())
@@ -110,6 +136,24 @@ class DesignTests(unittest.TestCase):
             self.assertEqual(second._tabs.currentIndex(), 4)
             self.assertEqual(second.size(), first.size())
             self.assertEqual(float(settings.value('monitor/interval')), 60)
+
+    def test_launch_interval_settings_and_explicit_cli_precedence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = QtCore.QSettings(directory + '/settings.ini', QtCore.QSettings.Format.IniFormat)
+            settings.setValue('monitor/interval', 10)
+            self.assertEqual(_settings_interval(build_parser().parse_args([]), settings), 10)
+            for spelling in (['--interval', '5'], ['--interval=5']):
+                self.assertEqual(_settings_interval(build_parser().parse_args(spelling), settings), 5)
+            for invalid in ('nan', 'inf', 0, 100, 'bad'):
+                settings.setValue('monitor/interval', invalid)
+                self.assertEqual(_settings_interval(build_parser().parse_args([]), settings), 2)
+
+    def test_shared_launcher_only_forwards_explicit_interval(self):
+        for arguments, expected in (([], []), (['--interval=5'], ['--interval', '5.0'])):
+            with self.subTest(arguments=arguments), patch.dict(os.environ, {'DISPLAY': ':1'}), \
+                    patch('thinkpad_monitor.desktop.main', return_value=0) as desktop:
+                self.assertEqual(cli.main(['--desktop', *arguments]), 0)
+                desktop.assert_called_once_with(expected)
 
     def test_live_data_is_plain_text_and_controls_named(self):
         window = self.window()

@@ -11,12 +11,24 @@ The original Linux laptop compatibility and native desktop implementation is on
 Continue the unfinished UI improvement work from `handoff/ui-design-cloud`.
 This snapshot is work in progress, not a completed release.
 
+**Historical cloud continuation:** the review findings below have been addressed in the
+working continuation, with 67 passing tests and refreshed synthetic previews.
+See `docs/VALIDATION.md` for current evidence and the GitHub authentication
+blocker. This document preserves the original handoff context; publication and
+remote CI are still required before the complete task can be called finished.
+
 User requirements: make the app useful across laptop vendors, x86-64 and ARM64,
 and major Linux desktop environments; use research and implementation subagents;
 improve the UI using current industry guidance; commit and push completed work
 to GitHub each time. Independently review delegated implementation and run
 relevant tests. Do not claim physical hardware or desktop environment coverage
 from headless tests alone.
+
+**Local continuation:** the unpublished cloud source patch from commit
+`d81016da8b4abfba1fac5aa4fb28136862090bb0` was recovered and verified using SHA256
+`848924f2f28da217b2b3692be8146623b01044ca2db11acc2700eb5cfdf8dcaa`. Its fixes were
+revalidated before the further modern styling pass. See current validation and
+design documentation; this file preserves the original handoff history.
 
 ## Work included in the snapshot
 

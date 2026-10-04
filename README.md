@@ -6,6 +6,11 @@ name for existing users, while discovering hardware by capability rather than br
 
 ![Desktop preview](docs/desktop-preview.png)
 
+Synthetic preview. The interface follows your system theme and font, with
+adaptive navigation, clear metric cards and a timestamped activity chart.
+See the [dark preview](docs/desktop-preview-dark.png) and
+[compact enlarged-text preview](docs/desktop-preview-narrow-large.png).
+
 Monitor CPU and individual cores, memory and swap, root filesystem and disk activity,
 all network interfaces, multiple batteries, thermal sensors, fans, graphics devices,
 and available measured power domains. Missing sensors are shown as **Unavailable**;
@@ -71,10 +76,14 @@ thinkpad-monitor --interval 5    # refresh every five seconds
 thinkpad-monitor --version
 ```
 
-The desktop offers refresh, pause/resume, a refresh interval, a bounded CPU history
-plot, and detailed tabs for batteries, networks, graphics and sensors. It uses your
+The desktop offers refresh, pause/resume, a remembered refresh interval, a bounded CPU history
+plot, and filterable detail pages for batteries, networks, graphics and sensors. It uses your
 Qt theme, scrollable content and ordinary windows; collection runs in a background
 worker. It does not depend on a tray extension or a particular desktop shell.
+
+Use **Ctrl+R** to refresh, **Ctrl+P** to pause or resume, **Ctrl+F** to filter the
+current detail page, **Ctrl+C** to copy table rows, and **Alt+Left/Right** to change
+pages. An explicit `--interval` overrides the saved desktop setting.
 
 The terminal supports **q** to quit, **Space** to pause, and **↑/↓** to scroll.
 `--legacy-tui` retains the original specialist ThinkPad/AMD terminal dashboard;
