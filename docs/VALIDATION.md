@@ -102,8 +102,16 @@ icon pen-restoration defect, stale palette handling and clipped status labels.
 
 Light/dark, compact enlarged-font and 2× scale synthetic previews were rendered.
 The checked-in screenshots now show the current design using synthetic telemetry.
-Source desktop smoke and source/wheel builds passed. Remote CI and installed
-launcher checks are being validated separately from these headless checks.
+Source desktop smoke and source/wheel builds passed. The local PyInstaller bundle
+passed desktop smoke and version checks. The user's launcher was upgraded to
+2.1.0 and passed its offscreen smoke check. A live Wayland window collected four
+CPU readings and closed cleanly on the current KDE/Intel laptop.
+
+The first current GitHub run passed x86-64/Python 3.10 and 3.13 and ARM64/Python
+3.13, but ARM64/Python 3.10 still aborted with PySide6 6.11.2. The desktop extra
+now keeps Linux ARM64/Python below 3.12 on PySide6 below 6.11; this dependency
+workaround is being verified in the unchanged test matrix. No Python reference
+count manipulation or disabled accessibility is used.
 
 Free external providers were used for design research, vector icon implementation,
 component styling and independent review with separate file ownership. The primary
