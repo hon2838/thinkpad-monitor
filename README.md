@@ -24,6 +24,8 @@ session. The base terminal/JSON package requires Python 3.9+ and psutil. Other L
 architectures can use the base package if psutil and curses are available; desktop
 support depends on a compatible distribution PySide6 build. Pip desktop wheels
 require a compatible glibc distribution; they are not universal musl/Alpine binaries.
+On Linux ARM64, Python 3.10/3.11 installs select Qt 6.7 to avoid a reproduced
+wheel compatibility crash; Python 3.12+ uses current Qt bindings.
 
 From this checkout, install into a dedicated user-local environment and add a
 **Laptop Monitor** applications-menu shortcut:
@@ -94,7 +96,7 @@ it is separate from the generic capability-aware views.
 | Component | Support strategy | Validation |
 | --- | --- | --- |
 | GNOME, KDE Plasma, Xfce, Cinnamon, MATE, LXQt | Qt Widgets with freedesktop menu entry; Wayland/X11 backend chosen by Qt | Local KDE runtime checks; other desktops need release testing |
-| Intel, AMD, ARM CPUs | psutil, dynamic cores/cpufreq discovery; no x86-specific instructions | Live Intel x86-64 and fixture tests; ARM64 CI configured |
+| Intel, AMD, ARM CPUs | psutil, dynamic cores/cpufreq discovery; no x86-specific instructions | Live Intel x86-64, fixture tests and passing ARM64 CI |
 | Lenovo, Dell, HP, ASUS, Acer and other laptop brands | Kernel power_supply, hwmon, thermal, DRM capability discovery | Arbitrary names/multiple batteries and missing sensor fixtures; no claim of testing every brand |
 | AMD, Intel, NVIDIA and other GPUs | Enumerate DRM cards and driver/vendor; read metrics actually exposed | Intel live discovery; AMD/Intel/NVIDIA/generic fixtures |
 | Battery power/health | Energy or charge-based packs; fixed units, independent health fields | Multi-pack fixtures and local battery |

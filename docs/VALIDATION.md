@@ -3,7 +3,7 @@
 ## Earlier local validation of main / v2.0.0
 
 The following checks were recorded before the cloud UI handoff. They describe
-the original installed UI, not the new handoff UI or this cloud environment.
+the original installed UI, before the 2.1 desktop design.
 
 - Python 3.14.7, PySide6 6.11.2, Fedora KDE session, Intel x86-64 ThinkPad.
 - Public CLI help/version, JSON telemetry, terminal launch and quit through a PTY.
@@ -89,7 +89,8 @@ suite rather than relying on binding-specific ownership. This addresses a
 reviewed lifetime risk but is **not a confirmed diagnosis of the ARM abort**.
 CI now keeps all matrix jobs running, enables Python fatal-crash tracebacks and
 uploads failed test output. The configured x86-64/ARM64 and Python 3.10/3.13
-matrix must pass on the continuation before its CI can be considered verified.
+matrix was still unverified at cloud handoff; the local continuation below
+completed its validation.
 
 ## Local modern design continuation (2.1.0)
 
@@ -107,15 +108,19 @@ passed desktop smoke and version checks. The user's launcher was upgraded to
 2.1.0 and passed its offscreen smoke check. A live Wayland window collected four
 CPU readings and closed cleanly on the current KDE/Intel laptop.
 
-The first current GitHub run passed x86-64/Python 3.10 and 3.13 and ARM64/Python
-3.13, but ARM64/Python 3.10 aborted with PySide6 6.11.2, 6.10.3 and 6.8.3. A minimal Qt label
-probe also loses approximately one None reference per setter call on 6.8.3,
-without importing the application. The desktop
-extra now selects an earlier binding for Linux ARM64/Python below 3.12. This
-dependency workaround is being verified in the full test matrix. CI also reports
-a minimal native-widget reference-count probe to separate wheel failures from
-application behavior. No Python reference
-count manipulation or disabled accessibility is used.
+The unchanged four-job GitHub matrix **passed all 76 tests in each job**, plus
+JSON collection, desktop smoke, distribution builds and desktop-entry validation:
+[verified run](https://github.com/hon2838/thinkpad-monitor/actions/runs/37200378716).
+This covers native x86-64 and ARM64 runners with Python 3.10 and 3.13.
+
+ARM64/Python 3.10 had aborted with PySide6 6.11.2, 6.10.3 and 6.8.3. A minimal
+Qt label probe, without importing the application, also lost approximately one
+None reference per setter call on 6.8.3. The desktop extra now selects PySide6
+below 6.8 only for Linux ARM64/Python below 3.12. CI selected 6.7.3; the minimal
+probe remained stable and the complete suite passed. Newer interpreters and
+x86-64 retain the current bindings. This demonstrates a working dependency
+selection, not an upstream root-cause diagnosis. No Python reference-count
+manipulation, disabled accessibility or omitted application tests are used.
 
 Free external providers were used for design research, vector icon implementation,
 component styling and independent review with separate file ownership. The primary
