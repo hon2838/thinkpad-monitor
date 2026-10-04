@@ -108,7 +108,9 @@ passed desktop smoke and version checks. The user's launcher was upgraded to
 CPU readings and closed cleanly on the current KDE/Intel laptop.
 
 The first current GitHub run passed x86-64/Python 3.10 and 3.13 and ARM64/Python
-3.13, but ARM64/Python 3.10 aborted with both PySide6 6.11.2 and 6.10.3. The desktop
+3.13, but ARM64/Python 3.10 aborted with PySide6 6.11.2, 6.10.3 and 6.8.3. A minimal Qt label
+probe also loses approximately one None reference per setter call on 6.8.3,
+without importing the application. The desktop
 extra now selects an earlier binding for Linux ARM64/Python below 3.12. This
 dependency workaround is being verified in the full test matrix. CI also reports
 a minimal native-widget reference-count probe to separate wheel failures from
