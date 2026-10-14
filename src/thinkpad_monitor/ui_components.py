@@ -15,7 +15,16 @@ __all__ = [
     "UNAVAILABLE",
     "SummaryCard",
     "UsageBar",
+    "HistoryGraph",
     "CpuGraph",
+    "CoreBarWidget",
+    "PerCoreGrid",
+    "BatteryPackCard",
+    "PowerSupplyCard",
+    "ThermalZoneBar",
+    "ThermalZoneGrid",
+    "FanMeterWidget",
+    "FanSpeedGrid",
     "DetailTable",
 ]
 
@@ -58,6 +67,54 @@ def _cell_text(value) -> str:
     if isinstance(value, str):
         return value.strip()
     return str(value)
+
+
+def _coerce_rate(value):
+    """Return non-negative float or None when missing/non-finite."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return max(0.0, number)
+
+
+def _coerce_float(value):
+    """Return float or None when missing/non-finite."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
+
+
+def _format_rate_unit(v):
+    if v is None:
+        return UNAVAILABLE
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return UNAVAILABLE
+    for u in ("B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"):
+        if abs(n) < 1024.0 or u == "TiB/s":
+            return "%d B/s" % int(n) if u == "B/s" else "%.1f %s" % (n, u)
+        n /= 1024.0
+    return "%.1f TiB/s" % n
+
+
+def _secondary_graph_color(primary: QtGui.QColor, base: QtGui.QColor) -> QtGui.QColor:
+    h, s, v, a = primary.getHsv()
+    if s < 30:
+        return QtGui.QColor(primary).lighter(150) if v < 150 else QtGui.QColor(primary).darker(150)
+    new_h = (h + 130) % 360
+    return QtGui.QColor.fromHsv(new_h, max(140, s), v, a)
 
 
 class UsageBar(QtWidgets.QProgressBar):
@@ -322,16 +379,22 @@ class SummaryCard(QtWidgets.QFrame):
         return self._value.text()
 
 
-class CpuGraph(QtWidgets.QWidget):
-    """History graph with real timestamps; gaps break the trace."""
+class HistoryGraph(QtWidgets.QWidget):
+    """Multi-series history graph supporting percent, rate, and temperature."""
 
-    def __init__(self, parent=None, limit=CPU_HISTORY_LIMIT):
+    def __init__(self, parent=None, limit=CPU_HISTORY_LIMIT, title="History graph",
+                 mode="percent", series_count=1, series_labels=None, series_colors=None):
         super().__init__(parent)
-        self.setObjectName("CpuGraph")
-        self.setAccessibleName("CPU usage history graph")
+        self.setObjectName("HistoryGraph")
+        self._title = str(title)
+        self.setAccessibleName(self._title)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self._limit = max(2, int(limit))
-        self._points: list[tuple[float, float]] = []
+        self._mode = mode
+        self._series_count = max(1, int(series_count))
+        self._series_labels = list(series_labels) if series_labels else []
+        self._series_colors = list(series_colors) if series_colors else []
+        self._points: list[tuple[float, float | tuple[float, ...]]] = []
         self._breaks: set[int] = set()
         self._pending_break = False
         self.setMinimumHeight(170)
@@ -339,28 +402,40 @@ class CpuGraph(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Expanding,
             QtWidgets.QSizePolicy.Policy.Preferred,
         )
-        self.setAccessibleDescription("No CPU history yet")
+        self.setAccessibleDescription(f"No {self._title} history yet")
 
-    def append(self, percent, timestamp=None):
-        value = _coerce_percent(percent)
-        if value is None:
-            # Missing/non-finite: skip and break the next segment.
-            if self._points:
-                self._pending_break = True
-            return
-        if timestamp is None:
-            moment = time.monotonic()
+    def append(self, val1, val2=None, timestamp=None):
+        if self._series_count == 1:
+            moment_arg = val2 if timestamp is None else timestamp
+            value = self._coerce_value(val1)
+            if value is None:
+                if self._points:
+                    self._pending_break = True
+                return
+            moment = self._coerce_moment(moment_arg)
+            if self._pending_break and self._points:
+                self._breaks.add(len(self._points))
+            self._pending_break = False
+            self._points.append((moment, value))
         else:
-            try:
-                moment = float(timestamp)
-            except (TypeError, ValueError):
-                moment = time.monotonic()
-            if not math.isfinite(moment):
-                moment = time.monotonic()
-        if self._pending_break and self._points:
-            self._breaks.add(len(self._points))
-        self._pending_break = False
-        self._points.append((moment, value))
+            if isinstance(val1, (list, tuple)) and len(val1) >= 2:
+                v1, v2 = val1[0], val1[1]
+                moment_arg = val2 if timestamp is None else timestamp
+            else:
+                v1, v2 = val1, val2
+                moment_arg = timestamp
+            c1 = self._coerce_value(v1)
+            c2 = self._coerce_value(v2)
+            if c1 is None and c2 is None:
+                if self._points:
+                    self._pending_break = True
+                return
+            moment = self._coerce_moment(moment_arg)
+            if self._pending_break and self._points:
+                self._breaks.add(len(self._points))
+            self._pending_break = False
+            self._points.append((moment, (c1 or 0.0, c2 or 0.0)))
+
         if len(self._points) > self._limit:
             excess = len(self._points) - self._limit
             del self._points[:excess]
@@ -368,6 +443,23 @@ class CpuGraph(QtWidgets.QWidget):
             self._breaks = kept
         self._refresh_accessible()
         self.update()
+
+    def _coerce_value(self, val):
+        if self._mode == "percent":
+            return _coerce_percent(val)
+        elif self._mode == "rate":
+            return _coerce_rate(val)
+        else:
+            return _coerce_float(val)
+
+    def _coerce_moment(self, timestamp):
+        if timestamp is None:
+            return time.monotonic()
+        try:
+            m = float(timestamp)
+            return m if math.isfinite(m) else time.monotonic()
+        except (TypeError, ValueError):
+            return time.monotonic()
 
     def gap(self):
         """Break the trace; next known reading starts a new segment."""
@@ -379,12 +471,14 @@ class CpuGraph(QtWidgets.QWidget):
         self._points = []
         self._breaks = set()
         self._pending_break = False
-        self.setAccessibleDescription("No CPU history yet")
+        self.setAccessibleDescription(f"No {self._title} history yet")
         self.update()
 
     @property
     def samples(self):
-        return [v for _, v in self._points]
+        if self._series_count == 1:
+            return [v for _, v in self._points]
+        return [vals for _, vals in self._points]
 
     @property
     def timestamps(self):
@@ -393,12 +487,24 @@ class CpuGraph(QtWidgets.QWidget):
     def _refresh_accessible(self):
         count = len(self._points)
         if not count:
-            self.setAccessibleDescription("No CPU history yet")
+            self.setAccessibleDescription(f"No {self._title} history yet")
             return
         latest = self._points[-1][1]
+        if self._series_count == 1:
+            if self._mode == "watts":
+                latest_str = f"{latest:.1f} W"
+            elif self._mode == "rpm":
+                latest_str = f"{int(round(latest))} RPM"
+            elif self._mode == "temp":
+                latest_str = f"{latest:.1f} °C"
+            elif self._mode == "rate":
+                latest_str = _format_rate_unit(latest)
+            else:
+                latest_str = f"{latest:.0f}"
+        else:
+            latest_str = ", ".join(f"{v:.0f}" for v in latest)
         self.setAccessibleDescription(
-            "Latest recorded CPU load %.0f percent, %d readings in history, %s"
-            % (latest, count, self.time_labels()[0])
+            f"{self._title}: latest {latest_str}, {count} readings, {self.time_labels()[0]}"
         )
 
     @staticmethod
@@ -414,7 +520,6 @@ class CpuGraph(QtWidgets.QWidget):
         return f"{seconds / 3600:.1f}h"
 
     def time_labels(self):
-        """Relative to the latest stored sample, including paused history."""
         if len(self._points) < 2:
             return "1 reading", "", "", "latest"
         span = max(0.0, self._points[-1][0] - self._points[0][0])
@@ -424,7 +529,6 @@ class CpuGraph(QtWidgets.QWidget):
                 "latest")
 
     def _time_fraction(self, moment):
-        """Position within stored history; zero-duration readings are latest."""
         start, end = self._points[0][0], self._points[-1][0]
         if end <= start:
             return 1.0
@@ -451,6 +555,7 @@ class CpuGraph(QtWidgets.QWidget):
             text = pal.color(QtGui.QPalette.ColorRole.Text)
             mid = pal.color(QtGui.QPalette.ColorRole.Mid)
             highlight = pal.color(QtGui.QPalette.ColorRole.Highlight)
+
             painter.fillRect(rect, base)
             if self.hasFocus():
                 option = QtWidgets.QStyleOptionFocusRect()
@@ -469,7 +574,62 @@ class CpuGraph(QtWidgets.QWidget):
                 font.setPointSizeF(9.0)
             painter.setFont(font)
             metrics = QtGui.QFontMetrics(font)
-            left = metrics.horizontalAdvance("100%") + 14
+
+            if self._mode == "percent":
+                y_max = 100.0
+                labels = ("100%", "50%", "0%")
+            elif self._mode == "rate":
+                max_val = 0.0
+                for _, val in self._points:
+                    if isinstance(val, (int, float)):
+                        max_val = max(max_val, float(val))
+                    elif isinstance(val, (tuple, list)):
+                        for v in val:
+                            if v is not None:
+                                max_val = max(max_val, float(v))
+                y_max = max(1024.0, max_val * 1.1)
+                labels = (_format_rate_unit(y_max), _format_rate_unit(y_max / 2.0), "0 B/s")
+            elif self._mode == "temp":
+                max_val = 0.0
+                for _, val in self._points:
+                    if isinstance(val, (int, float)):
+                        max_val = max(max_val, float(val))
+                    elif isinstance(val, (tuple, list)):
+                        for v in val:
+                            if v is not None:
+                                max_val = max(max_val, float(v))
+                y_max = max(100.0, max_val * 1.1)
+                labels = (f"{int(round(y_max))} °C", f"{int(round(y_max / 2.0))} °C", "0 °C")
+            elif self._mode == "watts":
+                max_val = 0.0
+                for _, val in self._points:
+                    if isinstance(val, (int, float)):
+                        max_val = max(max_val, float(val))
+                    elif isinstance(val, (tuple, list)):
+                        for v in val:
+                            if v is not None:
+                                max_val = max(max_val, float(v))
+                y_max = max(10.0, max_val * 1.15)
+                if y_max >= 100.0:
+                    labels = (f"{int(round(y_max))} W", f"{int(round(y_max / 2.0))} W", "0 W")
+                else:
+                    labels = (f"{y_max:.1f} W", f"{y_max / 2.0:.1f} W", "0 W")
+            elif self._mode == "rpm":
+                max_val = 0.0
+                for _, val in self._points:
+                    if isinstance(val, (int, float)):
+                        max_val = max(max_val, float(val))
+                    elif isinstance(val, (tuple, list)):
+                        for v in val:
+                            if v is not None:
+                                max_val = max(max_val, float(v))
+                y_max = max(3000.0, max_val * 1.15)
+                labels = (f"{int(round(y_max))} RPM", f"{int(round(y_max / 2.0))} RPM", "0 RPM")
+            else:
+                y_max = 100.0
+                labels = ("100", "50", "0")
+
+            left = max(metrics.horizontalAdvance(lbl) for lbl in labels) + 14
             right = 10
             top = 8
             bottom = metrics.height() + 10
@@ -481,102 +641,375 @@ class CpuGraph(QtWidgets.QWidget):
             )
             if plot.width() < 10 or plot.height() < 10:
                 return
-            # Grid + percent labels (native palette only, lighter grid).
+
             grid_color = QtGui.QColor(mid)
             grid_color.setAlpha(120)
             grid_pen = QtGui.QPen(grid_color, 1)
             grid_pen.setCosmetic(True)
             painter.setPen(grid_pen)
-            for pct in (0, 50, 100):
-                y = plot.bottom() - int(round(plot.height() * (pct / 100.0)))
+            for frac in (1.0, 0.5, 0.0):
+                y = plot.bottom() - int(round(plot.height() * frac))
                 painter.drawLine(plot.left(), y, plot.right(), y)
+
             painter.setPen(text)
-            painter.drawText(
-                4, plot.top() + metrics.ascent(), "100%"
-            )
-            painter.drawText(
-                4, plot.center().y() + metrics.ascent() // 2, "50%"
-            )
-            painter.drawText(4, plot.bottom(), "0%")
-            # No full plot border: the 0% grid line acts as the baseline.
+            painter.drawText(4, plot.top() + metrics.ascent(), labels[0])
+            painter.drawText(4, plot.center().y() + metrics.ascent() // 2, labels[1])
+            painter.drawText(4, plot.bottom(), labels[2])
 
             if not self._points:
-                painter.setPen(text)
-                painter.drawText(
-                    plot, QtCore.Qt.AlignmentFlag.AlignCenter, "No samples yet"
-                )
+                painter.drawText(plot, QtCore.Qt.AlignmentFlag.AlignCenter, "No samples yet")
                 return
+
+            colors = []
+            if self._series_colors:
+                colors = list(self._series_colors)
+            if len(colors) < 1:
+                colors.append(highlight)
+            if len(colors) < 2:
+                colors.append(_secondary_graph_color(highlight, base))
 
             def to_point(moment, val):
                 x = plot.left() + self._time_fraction(moment) * (plot.width() - 1)
-                y = plot.bottom() - (val / 100.0) * (plot.height() - 1)
+                clamped_val = max(0.0, min(y_max, val))
+                y = plot.bottom() - (clamped_val / y_max) * (plot.height() - 1)
                 return QtCore.QPointF(x, y)
 
-            segments: list[list[QtCore.QPointF]] = [[]]
-            for index, (moment, val) in enumerate(self._points):
-                if index in self._breaks and segments[-1]:
-                    segments.append([])
-                segments[-1].append(to_point(moment, val))
-            segments = [s for s in segments if s]
+            for s_idx in range(self._series_count):
+                series_color = colors[s_idx % len(colors)]
+                segments: list[list[QtCore.QPointF]] = [[]]
+                for p_idx, (moment, raw_val) in enumerate(self._points):
+                    if p_idx in self._breaks and segments[-1]:
+                        segments.append([])
+                    val = raw_val[s_idx] if self._series_count > 1 else raw_val
+                    if val is not None:
+                        segments[-1].append(to_point(moment, val))
+                segments = [s for s in segments if s]
 
-            # Subtle vertical area gradient derived from Highlight.
-            top_fill = QtGui.QColor(highlight)
-            top_fill.setAlpha(72)
-            bottom_fill = QtGui.QColor(highlight)
-            bottom_fill.setAlpha(10)
-            gradient = QtGui.QLinearGradient(0, plot.top(), 0, plot.bottom())
-            gradient.setColorAt(0.0, top_fill)
-            gradient.setColorAt(1.0, bottom_fill)
-            for seg in segments:
-                if len(seg) >= 2:
-                    poly = QtGui.QPolygonF(seg)
-                    poly.append(
-                        QtCore.QPointF(seg[-1].x(), plot.bottom())
-                    )
-                    poly.append(
-                        QtCore.QPointF(seg[0].x(), plot.bottom())
-                    )
-                    painter.setPen(QtCore.Qt.PenStyle.NoPen)
-                    painter.setBrush(gradient)
-                    painter.drawPolygon(poly)
-            painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-            trace_pen = QtGui.QPen(highlight, 2.0)
-            trace_pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
-            trace_pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
-            trace_pen.setCosmetic(False)
-            painter.setPen(trace_pen)
-            for seg in segments:
-                if len(seg) == 1:
-                    painter.drawEllipse(seg[0], 2.0, 2.0)
-                    continue
-                path = QtGui.QPainterPath()
-                path.moveTo(seg[0])
-                for point in seg[1:]:
-                    path.lineTo(point)
-                painter.drawPath(path)
-            # Latest-sample dot with a Base outline for light/dark contrast.
-            latest_point = segments[-1][-1] if segments else None
-            if latest_point is not None:
-                painter.setPen(QtGui.QPen(base, 1.5))
-                painter.setBrush(highlight)
-                painter.drawEllipse(latest_point, 3.5, 3.5)
-                painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+                if s_idx == 0:
+                    top_fill = QtGui.QColor(series_color)
+                    top_fill.setAlpha(72)
+                    bottom_fill = QtGui.QColor(series_color)
+                    bottom_fill.setAlpha(10)
+                    gradient = QtGui.QLinearGradient(0, plot.top(), 0, plot.bottom())
+                    gradient.setColorAt(0.0, top_fill)
+                    gradient.setColorAt(1.0, bottom_fill)
+                    for seg in segments:
+                        if len(seg) >= 2:
+                            poly = QtGui.QPolygonF(seg)
+                            poly.append(QtCore.QPointF(seg[-1].x(), plot.bottom()))
+                            poly.append(QtCore.QPointF(seg[0].x(), plot.bottom()))
+                            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+                            painter.setBrush(gradient)
+                            painter.drawPolygon(poly)
+                    painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
 
-            # Actual time axis: relative labels from stored timestamps.
+                trace_pen = QtGui.QPen(series_color, 2.0)
+                trace_pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+                trace_pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+                trace_pen.setCosmetic(False)
+                painter.setPen(trace_pen)
+                for seg in segments:
+                    if len(seg) == 1:
+                        painter.drawEllipse(seg[0], 2.0, 2.0)
+                        continue
+                    path = QtGui.QPainterPath()
+                    path.moveTo(seg[0])
+                    for pt in seg[1:]:
+                        path.lineTo(pt)
+                    painter.drawPath(path)
+
+                latest_point = segments[-1][-1] if segments else None
+                if latest_point is not None:
+                    painter.setPen(QtGui.QPen(base, 1.5))
+                    painter.setBrush(series_color)
+                    painter.drawEllipse(latest_point, 3.5, 3.5)
+                    painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+
             painter.setPen(text)
             span_label, left_label, middle_label, right_label = self.time_labels()
-            painter.drawText(
-                plot.left() + 4, plot.top() + metrics.ascent(), span_label
-            )
-            axis = QtCore.QRect(plot.left(), plot.bottom() + 4,
-                                plot.width(), metrics.height())
+            painter.drawText(plot.left() + 4, plot.top() + metrics.ascent(), span_label)
+            axis = QtCore.QRect(plot.left(), plot.bottom() + 4, plot.width(), metrics.height())
             painter.drawText(axis, QtCore.Qt.AlignmentFlag.AlignLeft, left_label)
             painter.drawText(axis, QtCore.Qt.AlignmentFlag.AlignRight, right_label)
             occupied = metrics.horizontalAdvance(left_label + right_label + middle_label) + 30
             if plot.width() >= occupied:
                 painter.drawText(axis, QtCore.Qt.AlignmentFlag.AlignHCenter, middle_label)
+
+            if self._series_labels and self._points:
+                latest_raw = self._points[-1][1]
+                legend_items = []
+                for s_idx, label in enumerate(self._series_labels):
+                    val = latest_raw[s_idx] if self._series_count > 1 else latest_raw
+                    if self._mode == "rate":
+                        val_str = _format_rate_unit(val)
+                    elif self._mode == "temp":
+                        val_str = f"{val:.1f} °C" if val is not None else UNAVAILABLE
+                    elif self._mode == "watts":
+                        val_str = f"{val:.1f} W" if val is not None else UNAVAILABLE
+                    elif self._mode == "rpm":
+                        val_str = f"{int(round(val))} RPM" if val is not None else UNAVAILABLE
+                    else:
+                        val_str = f"{val:.0f}%" if val is not None else UNAVAILABLE
+                    legend_items.append((label, val_str, colors[s_idx % len(colors)]))
+
+                legend_x = plot.right() - 6
+                legend_y = plot.top() + metrics.ascent()
+                for label, val_str, col in reversed(legend_items):
+                    text_str = f"{label}: {val_str}"
+                    text_w = metrics.horizontalAdvance(text_str)
+                    dot_x = legend_x - text_w - 14
+                    if dot_x < plot.left() + metrics.horizontalAdvance(span_label) + 30:
+                        break
+                    painter.setPen(QtCore.Qt.PenStyle.NoPen)
+                    painter.setBrush(col)
+                    painter.drawEllipse(QtCore.QPointF(dot_x + 4, legend_y - metrics.ascent() // 3), 3.0, 3.0)
+                    painter.setPen(text)
+                    painter.drawText(dot_x + 12, legend_y, text_str)
+                    legend_x = dot_x - 14
+
         finally:
             painter.end()
+
+
+class CpuGraph(HistoryGraph):
+    """History graph with real timestamps; gaps break the trace."""
+
+    def __init__(self, parent=None, limit=CPU_HISTORY_LIMIT):
+        super().__init__(
+            parent=parent,
+            limit=limit,
+            title="CPU usage history graph",
+            mode="percent",
+            series_count=1,
+            series_labels=None,
+        )
+        self.setObjectName("CpuGraph")
+        self.setAccessibleName("CPU usage history graph")
+        self.setAccessibleDescription("No CPU history yet")
+
+    def _refresh_accessible(self):
+        count = len(self._points)
+        if not count:
+            self.setAccessibleDescription("No CPU history yet")
+            return
+        latest = self._points[-1][1]
+        self.setAccessibleDescription(
+            "Latest recorded CPU load %.0f percent, %d readings in history, %s"
+            % (latest, count, self.time_labels()[0])
+        )
+
+
+class CoreBarWidget(QtWidgets.QFrame):
+    """Visual meter for a single CPU core with name, frequency and usage bar."""
+
+    def __init__(self, core_index: int, parent=None):
+        super().__init__(parent)
+        self.setObjectName("coreMeter")
+        self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+
+        header = QtWidgets.QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        self._title = QtWidgets.QLabel(f"Core {core_index}", self)
+        self._title.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        font = QtGui.QFont(self._title.font())
+        font.setBold(True)
+        self._title.setFont(font)
+
+        self._freq = QtWidgets.QLabel("", self)
+        self._freq.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self._freq.setObjectName("secondaryText")
+
+        header.addWidget(self._title, 0)
+        header.addStretch(1)
+        header.addWidget(self._freq, 0)
+        layout.addLayout(header)
+
+        self.bar = UsageBar(self)
+        self.bar.setFixedHeight(8)
+        self.bar.setTextVisible(False)
+        layout.addWidget(self.bar)
+
+    def update_core(self, percent, freq_mhz=None):
+        self.bar.set_usage(percent)
+        if freq_mhz is not None:
+            try:
+                self._freq.setText(f"{float(freq_mhz):.0f} MHz")
+            except (ValueError, TypeError):
+                self._freq.setText("")
+        else:
+            self._freq.setText("")
+        pct_text = f"{percent:.0f}%" if percent is not None else UNAVAILABLE
+        self.setAccessibleName(f"{self._title.text()}: {pct_text}")
+        self.setAccessibleDescription(
+            f"{self._title.text()} utilization {pct_text}, frequency {self._freq.text()}"
+        )
+
+
+class PerCoreGrid(QtWidgets.QWidget):
+    """Responsive grid container for CoreBarWidgets."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("perCoreGrid")
+        self._layout = QtWidgets.QGridLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(8)
+        self._widgets: list[CoreBarWidget] = []
+        self._columns = 4
+
+    def update_cores(self, per_core_percents, frequencies_mhz=None):
+        per_core = per_core_percents or []
+        freqs = frequencies_mhz or []
+        count = len(per_core)
+        if len(self._widgets) != count:
+            for w in self._widgets:
+                self._layout.removeWidget(w)
+                w.deleteLater()
+            self._widgets.clear()
+            for i in range(count):
+                w = CoreBarWidget(i, self)
+                self._widgets.append(w)
+            self._reflow()
+
+        for i, w in enumerate(self._widgets):
+            pct = per_core[i] if i < len(per_core) else None
+            freq = freqs[i] if i < len(freqs) else None
+            w.update_core(pct, freq)
+
+    def set_columns(self, columns: int):
+        cols = max(1, int(columns))
+        if self._columns != cols:
+            self._columns = cols
+            self._reflow()
+
+    def _reflow(self):
+        for i, w in enumerate(self._widgets):
+            self._layout.addWidget(w, i // self._columns, i % self._columns)
+
+
+class BatteryPackCard(QtWidgets.QFrame):
+    """Card representing an individual battery pack with charge, health and power stats."""
+
+    def __init__(self, name="Battery", parent=None):
+        super().__init__(parent)
+        self.setObjectName("detailPanel")
+        self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        header = QtWidgets.QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        self._name_label = QtWidgets.QLabel(str(name), self)
+        font = QtGui.QFont(self._name_label.font())
+        font.setBold(True)
+        font.setPointSizeF(font.pointSizeF() + 2)
+        self._name_label.setFont(font)
+        self._name_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+
+        self._status_badge = QtWidgets.QLabel("Unknown", self)
+        self._status_badge.setObjectName("statusBadge")
+        self._status_badge.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+
+        header.addWidget(self._name_label, 0)
+        header.addStretch(1)
+        header.addWidget(self._status_badge, 0)
+        layout.addLayout(header)
+
+        bars_layout = QtWidgets.QVBoxLayout()
+        bars_layout.setSpacing(6)
+
+        charge_row = QtWidgets.QHBoxLayout()
+        charge_lbl = QtWidgets.QLabel("Charge", self)
+        charge_lbl.setObjectName("secondaryText")
+        self._charge_detail = QtWidgets.QLabel("", self)
+        self._charge_detail.setObjectName("secondaryText")
+        charge_row.addWidget(charge_lbl)
+        charge_row.addStretch(1)
+        charge_row.addWidget(self._charge_detail)
+        bars_layout.addLayout(charge_row)
+
+        self.charge_bar = UsageBar(self)
+        self.charge_bar.setFixedHeight(10)
+        self.charge_bar.setTextVisible(False)
+        bars_layout.addWidget(self.charge_bar)
+
+        health_row = QtWidgets.QHBoxLayout()
+        health_lbl = QtWidgets.QLabel("Health", self)
+        health_lbl.setObjectName("secondaryText")
+        self._health_detail = QtWidgets.QLabel("", self)
+        self._health_detail.setObjectName("secondaryText")
+        health_row.addWidget(health_lbl)
+        health_row.addStretch(1)
+        health_row.addWidget(self._health_detail)
+        bars_layout.addLayout(health_row)
+
+        self.health_bar = UsageBar(self)
+        self.health_bar.setFixedHeight(10)
+        self.health_bar.setTextVisible(False)
+        bars_layout.addWidget(self.health_bar)
+        layout.addLayout(bars_layout)
+
+        self._stats_label = QtWidgets.QLabel("", self)
+        self._stats_label.setObjectName("secondaryText")
+        self._stats_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self._stats_label.setWordWrap(True)
+        layout.addWidget(self._stats_label)
+
+    def update_pack(self, pack: dict):
+        name = pack.get("name") or "Battery"
+        self._name_label.setText(str(name))
+        status = pack.get("status") or "Unknown"
+        thresh = pack.get("charge_stop_threshold")
+        if thresh:
+            status += f" (limit {thresh}%)"
+        self._status_badge.setText(status)
+
+        pct = pack.get("percent")
+        self.charge_bar.set_usage(pct)
+        wh = pack.get("energy_wh")
+        full_wh = pack.get("full_energy_wh")
+        wh_text = f"{wh:.1f} / {full_wh:.1f} Wh" if (wh is not None and full_wh is not None) else ""
+        pct_text = f"{pct:.0f}%" if pct is not None else UNAVAILABLE
+        self._charge_detail.setText(f"{pct_text} · {wh_text}" if wh_text else pct_text)
+
+        hpct = pack.get("health_percent")
+        self.health_bar.set_usage(hpct)
+        cycles = pack.get("cycles")
+        cycles_text = f"{int(cycles):,} cycles" if cycles is not None else ""
+        hpct_text = f"{hpct:.0f}%" if hpct is not None else UNAVAILABLE
+        self._health_detail.setText(f"{hpct_text} · {cycles_text}" if cycles_text else hpct_text)
+
+        parts = []
+        volts = pack.get("voltage_volts")
+        if volts is not None:
+            parts.append(f"{volts:.2f} V")
+        watts = pack.get("power_watts")
+        if watts is not None:
+            parts.append(f"{watts:.1f} W")
+        time_rem = pack.get("time_remaining_seconds")
+        if time_rem is not None:
+            try:
+                t = int(float(time_rem))
+                h, r = divmod(t, 3600)
+                m, _ = divmod(r, 60)
+                parts.append(f"Est. {h}h {m:02d}m remaining")
+            except Exception:
+                pass
+        self._stats_label.setText(" · ".join(parts) if parts else "")
+        self.setAccessibleName(f"Battery {name}: {pct_text}, {status}")
+
 
 
 class DetailTable(QtWidgets.QTableWidget):
@@ -752,3 +1185,296 @@ class DetailTable(QtWidgets.QTableWidget):
             if clipboard is not None:
                 clipboard.setText(text)
         return text
+
+
+class PowerSupplyCard(QtWidgets.QFrame):
+    """Card representing an AC adapter or USB Type-C PD power supply."""
+
+    def __init__(self, name="Power Supply", parent=None):
+        super().__init__(parent)
+        self.setObjectName("detailPanel")
+        self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+
+        header = QtWidgets.QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        self._name_label = QtWidgets.QLabel(str(name), self)
+        font = QtGui.QFont(self._name_label.font())
+        font.setBold(True)
+        font.setPointSizeF(font.pointSizeF() + 1)
+        self._name_label.setFont(font)
+        self._name_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+
+        self._status_badge = QtWidgets.QLabel("Unknown", self)
+        self._status_badge.setObjectName("statusBadge")
+        self._status_badge.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+
+        header.addWidget(self._name_label, 0)
+        header.addStretch(1)
+        header.addWidget(self._status_badge, 0)
+        layout.addLayout(header)
+
+        self._type_label = QtWidgets.QLabel("", self)
+        self._type_label.setObjectName("secondaryText")
+        self._type_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        layout.addWidget(self._type_label)
+
+        self._specs_label = QtWidgets.QLabel("", self)
+        self._specs_label.setObjectName("secondaryText")
+        self._specs_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        layout.addWidget(self._specs_label)
+
+    def update_supply(self, ps: dict):
+        name = ps.get("name") or "Power supply"
+        self._name_label.setText(str(name))
+        online = ps.get("online")
+        if online is True:
+            badge_text = "Connected"
+        elif online is False:
+            badge_text = "Disconnected"
+        else:
+            badge_text = ps.get("status") or "Unknown"
+        self._status_badge.setText(badge_text)
+
+        typ = ps.get("type") or "Power supply"
+        usb_typ = ps.get("usb_type")
+        type_str = f"Type: {typ}" + (f" ({usb_typ})" if usb_typ else "")
+        self._type_label.setText(type_str)
+
+        specs = []
+        volts = ps.get("voltage_volts")
+        amps = ps.get("current_amperes")
+        if volts is not None:
+            specs.append(f"{volts:.2f} V")
+        if amps is not None:
+            specs.append(f"{amps:.2f} A")
+        if volts is not None and amps is not None:
+            watts = volts * amps
+            specs.append(f"{watts:.1f} W")
+        self._specs_label.setText(" · ".join(specs) if specs else "No electrical telemetry reported")
+        self.setAccessibleName(f"{name}: {badge_text}")
+        self.setAccessibleDescription(f"{name} ({type_str}), status {badge_text}, {self._specs_label.text()}")
+
+
+class ThermalZoneBar(QtWidgets.QFrame):
+    """Visual meter for a thermal sensor with label, temperature, and colored bar."""
+
+    def __init__(self, label="Thermal Sensor", parent=None):
+        super().__init__(parent)
+        self.setObjectName("coreMeter")
+        self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+
+        header = QtWidgets.QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        self._title = QtWidgets.QLabel(str(label), self)
+        self._title.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        font = QtGui.QFont(self._title.font())
+        font.setBold(True)
+        self._title.setFont(font)
+
+        self._temp_label = QtWidgets.QLabel("", self)
+        self._temp_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self._temp_label.setObjectName("secondaryText")
+
+        header.addWidget(self._title, 0)
+        header.addStretch(1)
+        header.addWidget(self._temp_label, 0)
+        layout.addLayout(header)
+
+        self.bar = UsageBar(self)
+        self.bar.setFixedHeight(8)
+        self.bar.setTextVisible(False)
+        layout.addWidget(self.bar)
+
+    def update_sensor(self, label, celsius, crit_celsius=None):
+        self._title.setText(str(label))
+        if celsius is not None:
+            try:
+                c_val = float(celsius)
+                crit_val = float(crit_celsius) if crit_celsius is not None else 100.0
+                crit_val = max(50.0, crit_val)
+                pct = max(0.0, min(100.0, (c_val / crit_val) * 100.0))
+                self.bar.set_usage(pct)
+                crit_str = f" (crit {crit_celsius:.0f}°C)" if crit_celsius is not None else ""
+                self._temp_label.setText(f"{c_val:.1f} °C{crit_str}")
+            except (ValueError, TypeError):
+                self.bar.set_usage(None)
+                self._temp_label.setText(UNAVAILABLE)
+        else:
+            self.bar.set_usage(None)
+            self._temp_label.setText(UNAVAILABLE)
+        self.setAccessibleName(f"{self._title.text()}: {self._temp_label.text()}")
+        self.setAccessibleDescription(f"{self._title.text()} temperature {self._temp_label.text()}")
+
+
+class ThermalZoneGrid(QtWidgets.QWidget):
+    """Responsive grid container for ThermalZoneBar widgets."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("thermalZoneGrid")
+        self._layout = QtWidgets.QGridLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(8)
+        self._widgets: list[ThermalZoneBar] = []
+        self._columns = 3
+        self._no_sensors_label = QtWidgets.QLabel("No temperature sensors detected", self)
+        self._no_sensors_label.setObjectName("secondaryText")
+        self._layout.addWidget(self._no_sensors_label, 0, 0)
+
+    def update_sensors(self, sensors: list[dict]):
+        valid_sensors = [s for s in (sensors or []) if isinstance(s, dict) and s.get("celsius") is not None]
+        if not valid_sensors:
+            self._no_sensors_label.setVisible(True)
+            for w in self._widgets:
+                w.setVisible(False)
+            return
+
+        self._no_sensors_label.setVisible(False)
+        count = min(12, len(valid_sensors))
+        if len(self._widgets) != count:
+            for w in self._widgets:
+                self._layout.removeWidget(w)
+                w.deleteLater()
+            self._widgets.clear()
+            for _ in range(count):
+                w = ThermalZoneBar("", self)
+                self._widgets.append(w)
+            self._reflow()
+
+        for i in range(count):
+            s = valid_sensors[i]
+            label = s.get("label") or s.get("name") or f"Sensor {i+1}"
+            self._widgets[i].setVisible(True)
+            self._widgets[i].update_sensor(label, s.get("celsius"), s.get("critical_celsius"))
+
+    def set_columns(self, columns: int):
+        cols = max(1, int(columns))
+        if self._columns != cols:
+            self._columns = cols
+            self._reflow()
+
+    def _reflow(self):
+        for i, w in enumerate(self._widgets):
+            self._layout.addWidget(w, i // self._columns, i % self._columns)
+
+
+class FanMeterWidget(QtWidgets.QFrame):
+    """Visual meter for a cooling fan with RPM and status."""
+
+    def __init__(self, label="Cooling Fan", parent=None):
+        super().__init__(parent)
+        self.setObjectName("coreMeter")
+        self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+
+        header = QtWidgets.QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        self._title = QtWidgets.QLabel(str(label), self)
+        self._title.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        font = QtGui.QFont(self._title.font())
+        font.setBold(True)
+        self._title.setFont(font)
+
+        self._rpm_label = QtWidgets.QLabel("", self)
+        self._rpm_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self._rpm_label.setObjectName("secondaryText")
+
+        header.addWidget(self._title, 0)
+        header.addStretch(1)
+        header.addWidget(self._rpm_label, 0)
+        layout.addLayout(header)
+
+        self.bar = UsageBar(self)
+        self.bar.setFixedHeight(8)
+        self.bar.setTextVisible(False)
+        layout.addWidget(self.bar)
+
+    def update_fan(self, label, rpm):
+        self._title.setText(str(label))
+        if rpm is not None:
+            try:
+                r_val = float(rpm)
+                pct = max(0.0, min(100.0, (r_val / 5500.0) * 100.0))
+                self.bar.set_usage(pct)
+                status = "Off / 0 RPM" if r_val <= 0 else f"{int(round(r_val))} RPM"
+                self._rpm_label.setText(status)
+            except (ValueError, TypeError):
+                self.bar.set_usage(None)
+                self._rpm_label.setText(UNAVAILABLE)
+        else:
+            self.bar.set_usage(None)
+            self._rpm_label.setText(UNAVAILABLE)
+        self.setAccessibleName(f"{self._title.text()}: {self._rpm_label.text()}")
+        self.setAccessibleDescription(f"{self._title.text()} speed {self._rpm_label.text()}")
+
+
+class FanSpeedGrid(QtWidgets.QWidget):
+    """Responsive grid container for FanMeterWidget components."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("fanSpeedGrid")
+        self._layout = QtWidgets.QGridLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(8)
+        self._widgets: list[FanMeterWidget] = []
+        self._columns = 2
+        self._no_fans_label = QtWidgets.QLabel("No cooling fans detected or controllable by driver", self)
+        self._no_fans_label.setObjectName("secondaryText")
+        self._layout.addWidget(self._no_fans_label, 0, 0)
+
+    def update_fans(self, fans: list[dict]):
+        valid_fans = [f for f in (fans or []) if isinstance(f, dict)]
+        if not valid_fans:
+            self._no_fans_label.setVisible(True)
+            for w in self._widgets:
+                w.setVisible(False)
+            return
+
+        self._no_fans_label.setVisible(False)
+        count = len(valid_fans)
+        if len(self._widgets) != count:
+            for w in self._widgets:
+                self._layout.removeWidget(w)
+                w.deleteLater()
+            self._widgets.clear()
+            for _ in range(count):
+                w = FanMeterWidget("", self)
+                self._widgets.append(w)
+            self._reflow()
+
+        for i, f in enumerate(valid_fans):
+            label = f.get("label") or f.get("name") or f"Fan {i+1}"
+            self._widgets[i].setVisible(True)
+            self._widgets[i].update_fan(label, f.get("rpm"))
+
+    def set_columns(self, columns: int):
+        cols = max(1, int(columns))
+        if self._columns != cols:
+            self._columns = cols
+            self._reflow()
+
+    def _reflow(self):
+        for i, w in enumerate(self._widgets):
+            self._layout.addWidget(w, i // self._columns, i % self._columns)
+

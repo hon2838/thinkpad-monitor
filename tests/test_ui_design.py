@@ -86,9 +86,9 @@ class DesignTests(unittest.TestCase):
         window = self.window()
         window._on_sample(make_sample(cpu={'percent': 50, 'per_core_percent': [float(i) for i in range(32)],
                                           'frequencies_mhz': [2000] * 32}))
-        self.assertEqual(window._cpu_table.rowCount(), 36)
-        self.assertEqual(window._cpu_table.item(35, 0).text(), 'Core 31')
-        self.assertIn('31%', window._cpu_table.item(35, 1).text())
+        self.assertEqual(window._cpu_table.rowCount(), 37)
+        self.assertEqual(window._cpu_table.item(36, 0).text(), 'Core 31')
+        self.assertIn('31%', window._cpu_table.item(36, 1).text())
 
     def test_compact_controls_fit_enlarged_system_font(self):
         previous = self.app.font()

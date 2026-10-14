@@ -298,5 +298,44 @@ class DesktopTest(unittest.TestCase):
         self.assertEqual(window.cpu_history, before)
 
 
+    def test_detail_tabs_graphs_and_cards_render(self):
+        window = self._window(FakeCollector(), interval=10.0)
+        sample = make_sample()
+        window._on_sample(sample)
+        # Processor tab
+        self.assertEqual(len(window._cpu_detail_graph.samples), 1)
+        self.assertEqual(window._cpu_activity_card.value_text, "42%")
+        self.assertEqual(len(window._core_grid._widgets), 2)
+        # Memory tab
+        self.assertEqual(len(window._mem_graph.samples), 1)
+        self.assertEqual(window._mem_ram_card.value_text, "50%")
+        # Storage tab
+        self.assertEqual(len(window._storage_graph.samples), 1)
+        self.assertEqual(window._storage_fs_card.value_text, "20%")
+        # Battery tab
+        self.assertEqual(len(window._battery_cards), 1)
+        self.assertFalse(window._battery_cards[0].isHidden())
+        self.assertEqual(len(window._battery_graph.samples), 1)
+        self.assertEqual(window._battery_graph.samples[0], 10.0)
+        # Network tab
+        self.assertEqual(len(window._net_graph.samples), 1)
+        self.assertEqual(window._net_active_card.value_text, "wlan0")
+        # Thermals tab
+        self.assertEqual(len(window._therm_graph.samples), 1)
+        self.assertEqual(len(window._fan_graph.samples), 1)
+        self.assertEqual(window._fan_graph.samples[0], 2500.0)
+        self.assertIn("55", window._therm_peak_card.value_text)
+        self.assertEqual(len(window._thermal_grid._widgets), 1)
+        self.assertEqual(len(window._fan_grid._widgets), 1)
+        # Graphics tab
+        self.assertEqual(len(window._gpu_graph.samples), 1)
+        self.assertEqual(window._gpu_load_card.value_text, "10%")
+        # Power tab
+        self.assertEqual(len(window._power_graph.samples), 1)
+        self.assertEqual(window._power_graph.samples[0], 12.5)
+        self.assertIn("12.50 W", window._power_draw_card.value_text)
+
+
 if __name__ == "__main__":
     unittest.main()
+

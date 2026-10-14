@@ -430,10 +430,158 @@ class CollectorTest(unittest.TestCase):
         text = json.dumps(sample)
         back = json.loads(text)
         for key in ("system", "cpu", "memory", "storage", "networks",
-                    "batteries", "temperatures", "fans", "gpus",
+                    "batteries", "power_supplies", "temperatures", "fans", "gpus",
                     "power", "warnings"):
             self.assertIn(key, back)
+
+    def test_unpopulated_sensor_enxio_no_permission_warning(self):
+        import errno
+        hw = os.path.join(self.sys, "class/hwmon/hwmon8")
+        os.makedirs(hw)
+        write(os.path.join(hw, "name"), "thinkpad\n")
+        write(os.path.join(hw, "temp1_input"), "45000\n")
+        write(os.path.join(hw, "temp8_input"), "0\n")
+        c = self.collector()
+        real_read_float = c._read_float
+
+        def fake_read_float(path):
+            if "temp8_input" in path:
+                err = OSError("No such device or address")
+                err.errno = errno.ENXIO
+                raise err
+            return real_read_float(path)
+
+        with unittest.mock.patch.object(c, "_read_float", side_effect=fake_read_float):
+            sample = c.sample()
+        self.assertFalse(any("temp8" in w for w in sample["warnings"]))
+        self.assertFalse(any("permission" in w.lower() for w in sample["warnings"]))
+        self.assertEqual(len(sample["temperatures"]), 1)
+        self.assertEqual(sample["temperatures"][0]["celsius"], 45.0)
+
+    def test_gpu_frequency_and_platform_temp_fallback(self):
+        card_dir = os.path.join(self.sys, "class/drm/card1")
+        dev_dir = os.path.join(card_dir, "device")
+        os.makedirs(dev_dir)
+        write(os.path.join(dev_dir, "vendor"), "0x8086\n")
+        write(os.path.join(card_dir, "gt_act_freq_mhz"), "350\n")
+
+        # platform hwmon with GPU label
+        hw = os.path.join(self.sys, "class/hwmon/hwmon8")
+        os.makedirs(hw)
+        write(os.path.join(hw, "name"), "thinkpad\n")
+        write(os.path.join(hw, "temp2_input"), "39000\n")
+        write(os.path.join(hw, "temp2_label"), "GPU\n")
+
+        sample = self.collector().sample()
+        self.assertEqual(len(sample["gpus"]), 1)
+        gpu = sample["gpus"][0]
+        self.assertEqual(gpu["vendor"], "Intel")
+        self.assertEqual(gpu["frequency_mhz"], 350.0)
+        self.assertEqual(gpu["temperature_celsius"], 39.0)
+
+    def test_power_supplies_and_battery_thresholds(self):
+        # Battery with thresholds
+        bat_dir = os.path.join(self.sys, "class/power_supply/BAT0")
+        os.makedirs(bat_dir)
+        write(os.path.join(bat_dir, "type"), "Battery\n")
+        write(os.path.join(bat_dir, "status"), "Not charging\n")
+        write(os.path.join(bat_dir, "capacity"), "80\n")
+        write(os.path.join(bat_dir, "charge_control_start_threshold"), "75\n")
+        write(os.path.join(bat_dir, "charge_control_end_threshold"), "80\n")
+        write(os.path.join(bat_dir, "technology"), "Li-poly\n")
+        write(os.path.join(bat_dir, "manufacturer"), "Sunwoda\n")
+
+        # AC mains
+        ac_dir = os.path.join(self.sys, "class/power_supply/AC")
+        os.makedirs(ac_dir)
+        write(os.path.join(ac_dir, "type"), "Mains\n")
+        write(os.path.join(ac_dir, "online"), "1\n")
+
+        # USB PD
+        usb_dir = os.path.join(self.sys, "class/power_supply/ucsi-source-psy-USBC000:001")
+        os.makedirs(usb_dir)
+        write(os.path.join(usb_dir, "type"), "USB\n")
+        write(os.path.join(usb_dir, "online"), "1\n")
+        write(os.path.join(usb_dir, "current_now"), "3250000\n")
+        write(os.path.join(usb_dir, "usb_type"), "C [PD] PD_PPS\n")
+
+        sample = self.collector().sample()
+        bat = sample["batteries"][0]
+        self.assertEqual(bat["charge_start_threshold"], 75)
+        self.assertEqual(bat["charge_stop_threshold"], 80)
+        self.assertEqual(bat["technology"], "Li-poly")
+        self.assertEqual(bat["manufacturer"], "Sunwoda")
+
+        ps_map = {p["name"]: p for p in sample["power_supplies"]}
+        self.assertIn("AC", ps_map)
+        self.assertTrue(ps_map["AC"]["online"])
+        self.assertEqual(ps_map["AC"]["type"], "Mains")
+
+        self.assertIn("ucsi-source-psy-USBC000:001", ps_map)
+        usbc = ps_map["ucsi-source-psy-USBC000:001"]
+        self.assertTrue(usbc["online"])
+        self.assertEqual(usbc["current_amperes"], 3.25)
+        self.assertEqual(usbc["usb_type"], "C [PD] PD_PPS")
+
+    def test_intel_gpu_rc6_busy_calculation(self):
+        card_dir = os.path.join(self.sys, "class/drm/card1")
+        dev_dir = os.path.join(card_dir, "device")
+        os.makedirs(dev_dir)
+        write(os.path.join(dev_dir, "vendor"), "0x8086\n")
+        rc6_file = os.path.join(card_dir, "gt/gt0/rc6_residency_ms")
+        write(rc6_file, "1000\n")
+
+        clock = FakeClock(start=100.0)
+        c = self.collector(clock=clock)
+        # First sample: establishes baseline
+        s1 = c.sample()
+        self.assertEqual(s1["gpus"][0]["busy_percent"], 0.0)
+
+        # 1.0s later, 750ms in RC6 sleep -> 25% busy
+        clock.advance(1.0)
+        write(rc6_file, "1750\n")
+        s2 = c.sample()
+        self.assertAlmostEqual(s2["gpus"][0]["busy_percent"], 25.0)
+
+    def test_cpu_governor_driver_and_epp(self):
+        d = os.path.join(self.sys, "devices/system/cpu/cpu0/cpufreq")
+        os.makedirs(d)
+        write(os.path.join(d, "scaling_governor"), "powersave\n")
+        write(os.path.join(d, "scaling_driver"), "intel_pstate\n")
+        write(os.path.join(d, "energy_performance_preference"), "balance_performance\n")
+
+        sample = self.collector().sample()
+        cpu = sample["cpu"]
+        self.assertEqual(cpu["governor"], "powersave")
+        self.assertEqual(cpu["driver"], "intel_pstate")
+        self.assertEqual(cpu["energy_performance_preference"], "balance_performance")
+
+    def test_rapl_permission_consolidated_warning(self):
+        dom1 = os.path.join(self.sys, "class/powercap/intel-rapl:0")
+        dom2 = os.path.join(self.sys, "class/powercap/intel-rapl:0:0")
+        os.makedirs(dom1)
+        os.makedirs(dom2)
+        write(os.path.join(dom1, "name"), "package-0\n")
+        write(os.path.join(dom2, "name"), "core\n")
+        # create energy_uj with unreadable permission (mode 000)
+        e1 = os.path.join(dom1, "energy_uj")
+        e2 = os.path.join(dom2, "energy_uj")
+        write(e1, "12345\n")
+        write(e2, "67890\n")
+        os.chmod(e1, 0)
+        os.chmod(e2, 0)
+        try:
+            c = self.collector()
+            sample = c.sample()
+            rapl_warns = [w for w in sample["warnings"] if "RAPL energy counters" in w]
+            self.assertEqual(len(rapl_warns), 1)
+            self.assertIn("intel-rapl:0", rapl_warns[0])
+            self.assertIn("intel-rapl:0:0", rapl_warns[0])
+        finally:
+            os.chmod(e1, 0o644)
+            os.chmod(e2, 0o644)
 
 
 if __name__ == "__main__":
     unittest.main()
+

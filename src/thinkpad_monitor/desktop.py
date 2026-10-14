@@ -138,7 +138,21 @@ class SampleWorker(QtCore.QObject):
                 pass
 
 
-from .ui_components import SummaryCard, UsageBar, CpuGraph, DetailTable
+from .ui_components import (
+    SummaryCard,
+    UsageBar,
+    CpuGraph,
+    HistoryGraph,
+    CoreBarWidget,
+    PerCoreGrid,
+    BatteryPackCard,
+    PowerSupplyCard,
+    ThermalZoneBar,
+    ThermalZoneGrid,
+    FanMeterWidget,
+    FanSpeedGrid,
+    DetailTable,
+)
 
 
 class MonitorWindow(QtWidgets.QMainWindow):
@@ -270,18 +284,14 @@ class MonitorWindow(QtWidgets.QMainWindow):
         root.addLayout(content, 1)
 
         self._build_summary_tab()
-        self._cpu_table = self._table_tab("Processor", ["Metric", "Value"], "CPU activity, frequency and individual cores")
-        self._mem_table = self._table_tab("Memory", ["Metric", "Value"], "Memory available to apps and swap usage")
-        self._storage_table = self._table_tab("Storage", ["Metric", "Value"], "Root filesystem capacity and system disk activity")
-        self._battery_table = self._table_tab("Batteries", ["Name", "Status", "Charge", "Health", "Cycles", "Voltage", "Power", "Energy (Wh)", "Estimated time"], "Each battery pack, its health and power use")
-        self._net_table = self._table_tab("Network", ["Interface", "Connected", "Addresses", "Download", "Upload", "Received", "Sent"], "All interfaces and their measured transfer rates")
-        layout = self._add_scroll_tab("Thermals", "Temperatures and fan speeds reported by your device")
-        self._temp_table = DetailTable(["Sensor", "Label", "Temperature", "Critical limit"])
-        layout.addWidget(self._detail_panel("Temperatures", self._temp_table))
-        self._fan_table = DetailTable(["Fan", "Label", "Speed"])
-        layout.addWidget(self._detail_panel("Cooling fans", self._fan_table))
-        self._gpu_table = self._table_tab("Graphics", ["GPU", "Vendor", "Driver", "Activity", "Temperature", "VRAM used", "VRAM total"], "Graphics devices and available driver readings")
-        self._power_table = self._table_tab("Power", ["Domain", "Measured watts"], "Actual sensor readings; availability depends on your hardware")
+        self._build_cpu_tab()
+        self._build_memory_tab()
+        self._build_storage_tab()
+        self._build_battery_tab()
+        self._build_net_tab()
+        self._build_thermals_tab()
+        self._build_gpu_tab()
+        self._build_power_tab()
         system_layout = self._add_scroll_tab("System", "Device information and sensor availability")
         self._system_table = DetailTable(["Field", "Value"])
         system_layout.addWidget(self._detail_panel("Device", self._system_table))
@@ -352,6 +362,13 @@ class MonitorWindow(QtWidgets.QMainWindow):
             return
         for card in self._cards.values():
             card._apply_card_style()
+        for attr in ("_cpu_activity_card", "_cpu_loadavg_card", "_mem_ram_card", "_mem_swap_card",
+                     "_storage_fs_card", "_storage_io_card", "_net_active_card", "_net_totals_card",
+                     "_therm_peak_card", "_therm_fan_card", "_gpu_load_card", "_gpu_vram_card",
+                     "_power_draw_card", "_power_source_card"):
+            card = getattr(self, attr, None)
+            if card is not None and hasattr(card, "_apply_card_style"):
+                card._apply_card_style()
         self._refresh_icons()
         self._fit_status()
 
@@ -368,6 +385,17 @@ class MonitorWindow(QtWidgets.QMainWindow):
                           ("gpu", "gpu"), ("fan", "fan")):
             if hasattr(self._cards[key], "set_icon"):
                 self._cards[key].set_icon(icon(name, palette))
+        for card_attr, icon_name in (
+            ("_cpu_activity_card", "cpu"), ("_cpu_loadavg_card", "cpu"),
+            ("_mem_ram_card", "memory"), ("_mem_swap_card", "memory"),
+            ("_storage_fs_card", "storage"), ("_storage_io_card", "storage"),
+            ("_net_active_card", "network"), ("_net_totals_card", "network"),
+            ("_therm_peak_card", "thermals"), ("_therm_fan_card", "fan"),
+            ("_gpu_load_card", "gpu"), ("_gpu_vram_card", "gpu")
+        ):
+            c = getattr(self, card_attr, None)
+            if c is not None and hasattr(c, "set_icon"):
+                c.set_icon(icon(icon_name, palette))
         compact = self.width() < 520
         self._pause_button.setIcon(QtGui.QIcon() if compact else icon("resume" if self._paused else "pause", palette))
         self._refresh_button.setIcon(QtGui.QIcon() if compact else icon("refresh", palette))
@@ -440,6 +468,251 @@ class MonitorWindow(QtWidgets.QMainWindow):
         layout.addWidget(table, 1)
         table.setMinimumHeight(200)
         return panel
+
+    def _cards_row(self, card1, card2):
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(14)
+        row.addWidget(card1, 1)
+        row.addWidget(card2, 1)
+        return row
+
+    def _history_panel(self, title, graph, description="Recent readings · gaps indicate paused or unavailable data"):
+        panel = QtWidgets.QFrame()
+        panel.setObjectName("historyPanel")
+        gl = QtWidgets.QVBoxLayout(panel)
+        gl.setContentsMargins(20, 12, 20, 12)
+        gl.addWidget(self._section_title(title))
+        if description:
+            desc = QtWidgets.QLabel(description)
+            desc.setWordWrap(True)
+            desc.setObjectName("secondaryText")
+            gl.addWidget(desc)
+        gl.addWidget(graph, 1)
+        return panel
+
+    def _gap_all_graphs(self):
+        for g in (getattr(self, "_graph", None),
+                  getattr(self, "_cpu_detail_graph", None),
+                  getattr(self, "_mem_graph", None),
+                  getattr(self, "_storage_graph", None),
+                  getattr(self, "_battery_graph", None),
+                  getattr(self, "_net_graph", None),
+                  getattr(self, "_therm_graph", None),
+                  getattr(self, "_fan_graph", None),
+                  getattr(self, "_power_graph", None),
+                  getattr(self, "_gpu_graph", None)):
+            if g is not None:
+                g.gap()
+
+    def _build_cpu_tab(self):
+        layout = self._add_scroll_tab("Processor", "CPU activity, frequency and individual cores")
+        self._cpu_activity_card = SummaryCard("Processor Load")
+        self._cpu_activity_card.setObjectName("metricCard")
+        self._cpu_loadavg_card = SummaryCard("Load Average")
+        self._cpu_loadavg_card.setObjectName("metricCard")
+        self._cpu_loadavg_card.bar.hide()
+        layout.addLayout(self._cards_row(self._cpu_activity_card, self._cpu_loadavg_card))
+
+        self._cpu_detail_graph = CpuGraph()
+        layout.addWidget(self._history_panel("Processor activity history", self._cpu_detail_graph))
+
+        core_panel = QtWidgets.QFrame()
+        core_panel.setObjectName("detailPanel")
+        c_lay = QtWidgets.QVBoxLayout(core_panel)
+        c_lay.setContentsMargins(16, 14, 16, 14)
+        c_lay.setSpacing(10)
+        c_lay.addWidget(self._section_title("Logical cores"))
+        self._core_grid = PerCoreGrid()
+        c_lay.addWidget(self._core_grid)
+        layout.addWidget(core_panel)
+
+        self._cpu_table = DetailTable(["Metric", "Value"])
+        layout.addWidget(self._detail_panel("Processor", self._cpu_table))
+
+    def _build_memory_tab(self):
+        layout = self._add_scroll_tab("Memory", "Memory available to apps and swap usage")
+        self._mem_ram_card = SummaryCard("Physical Memory")
+        self._mem_ram_card.setObjectName("metricCard")
+        self._mem_swap_card = SummaryCard("Swap Space")
+        self._mem_swap_card.setObjectName("metricCard")
+        layout.addLayout(self._cards_row(self._mem_ram_card, self._mem_swap_card))
+
+        self._mem_graph = HistoryGraph(title="Memory usage history", mode="percent", series_labels=["Memory used"])
+        layout.addWidget(self._history_panel("Memory usage history", self._mem_graph))
+
+        self._mem_table = DetailTable(["Metric", "Value"])
+        layout.addWidget(self._detail_panel("Memory", self._mem_table))
+
+    def _build_storage_tab(self):
+        layout = self._add_scroll_tab("Storage", "Root filesystem capacity and system disk activity")
+        self._storage_fs_card = SummaryCard("Filesystem (/)")
+        self._storage_fs_card.setObjectName("metricCard")
+        self._storage_io_card = SummaryCard("Disk Throughput")
+        self._storage_io_card.setObjectName("metricCard")
+        self._storage_io_card.bar.hide()
+        layout.addLayout(self._cards_row(self._storage_fs_card, self._storage_io_card))
+
+        self._storage_graph = HistoryGraph(title="Disk I/O throughput", mode="rate", series_count=2, series_labels=["Read", "Write"])
+        layout.addWidget(self._history_panel("Disk I/O throughput", self._storage_graph))
+
+        self._storage_table = DetailTable(["Metric", "Value"])
+        layout.addWidget(self._detail_panel("Storage", self._storage_table))
+
+    def _build_battery_tab(self):
+        layout = self._add_scroll_tab("Batteries", "Each battery pack, its health and power use")
+        self._battery_cards_container = QtWidgets.QVBoxLayout()
+        self._battery_cards_container.setSpacing(10)
+        self._battery_cards = []
+        self._no_battery_card = QtWidgets.QLabel("No battery detected")
+        self._no_battery_card.setObjectName("secondaryText")
+        self._no_battery_card.setVisible(False)
+        self._battery_cards_container.addWidget(self._no_battery_card)
+        layout.addLayout(self._battery_cards_container)
+
+        self._battery_graph = HistoryGraph(title="Battery power draw", mode="watts", series_labels=["Power draw"])
+        layout.addWidget(self._history_panel("Battery power draw history", self._battery_graph))
+
+        self._battery_table = DetailTable(["Name", "Status", "Charge", "Health", "Cycles", "Voltage", "Power", "Energy (Wh)", "Estimated time"])
+        layout.addWidget(self._detail_panel("Batteries", self._battery_table))
+
+    def _update_battery_cards(self, bats):
+        if not bats:
+            self._no_battery_card.setVisible(True)
+            for card in self._battery_cards:
+                card.setVisible(False)
+            return
+        self._no_battery_card.setVisible(False)
+        while len(self._battery_cards) < len(bats):
+            card = BatteryPackCard("BAT%d" % len(self._battery_cards))
+            self._battery_cards.append(card)
+            self._battery_cards_container.addWidget(card)
+        for i, card in enumerate(self._battery_cards):
+            if i < len(bats):
+                card.setVisible(True)
+                card.update_pack(bats[i])
+            else:
+                card.setVisible(False)
+
+    def _build_net_tab(self):
+        layout = self._add_scroll_tab("Network", "All interfaces and their measured transfer rates")
+        self._net_active_card = SummaryCard("Active Interface")
+        self._net_active_card.setObjectName("metricCard")
+        self._net_active_card.bar.hide()
+        self._net_totals_card = SummaryCard("Cumulative Data")
+        self._net_totals_card.setObjectName("metricCard")
+        self._net_totals_card.bar.hide()
+        layout.addLayout(self._cards_row(self._net_active_card, self._net_totals_card))
+
+        self._net_graph = HistoryGraph(title="Network bandwidth", mode="rate", series_count=2, series_labels=["Download", "Upload"])
+        layout.addWidget(self._history_panel("Network bandwidth", self._net_graph))
+
+        self._net_table = DetailTable(["Interface", "Connected", "Addresses", "Download", "Upload", "Received", "Sent"])
+        layout.addWidget(self._detail_panel("Network", self._net_table))
+
+    def _build_thermals_tab(self):
+        layout = self._add_scroll_tab("Thermals", "Temperatures and fan speeds reported by your device")
+        self._therm_peak_card = SummaryCard("Hottest Sensor")
+        self._therm_peak_card.setObjectName("metricCard")
+        self._therm_peak_card.bar.hide()
+        self._therm_fan_card = SummaryCard("Cooling Fans")
+        self._therm_fan_card.setObjectName("metricCard")
+        self._therm_fan_card.bar.hide()
+        layout.addLayout(self._cards_row(self._therm_peak_card, self._therm_fan_card))
+
+        self._therm_graph = HistoryGraph(title="Thermal history", mode="temp", series_labels=["Hottest sensor"])
+        layout.addWidget(self._history_panel("Temperature history", self._therm_graph))
+
+        self._fan_graph = HistoryGraph(title="Fan speed history", mode="rpm", series_labels=["Fan speed"])
+        layout.addWidget(self._history_panel("Fan speed history", self._fan_graph))
+
+        thermal_grid_panel = QtWidgets.QFrame()
+        thermal_grid_panel.setObjectName("detailPanel")
+        tg_lay = QtWidgets.QVBoxLayout(thermal_grid_panel)
+        tg_lay.setContentsMargins(16, 14, 16, 14)
+        tg_lay.setSpacing(10)
+        tg_lay.addWidget(self._section_title("Thermal zones & sensors"))
+        self._thermal_grid = ThermalZoneGrid()
+        tg_lay.addWidget(self._thermal_grid)
+        layout.addWidget(thermal_grid_panel)
+
+        fan_grid_panel = QtWidgets.QFrame()
+        fan_grid_panel.setObjectName("detailPanel")
+        fg_lay = QtWidgets.QVBoxLayout(fan_grid_panel)
+        fg_lay.setContentsMargins(16, 14, 16, 14)
+        fg_lay.setSpacing(10)
+        fg_lay.addWidget(self._section_title("Cooling fan tachometers"))
+        self._fan_grid = FanSpeedGrid()
+        fg_lay.addWidget(self._fan_grid)
+        layout.addWidget(fan_grid_panel)
+
+        self._temp_table = DetailTable(["Sensor", "Label", "Temperature", "Critical limit"])
+        layout.addWidget(self._detail_panel("Temperatures", self._temp_table))
+        self._fan_table = DetailTable(["Fan", "Label", "Speed"])
+        layout.addWidget(self._detail_panel("Cooling fans", self._fan_table))
+
+    def _build_power_tab(self):
+        layout = self._add_scroll_tab("Power", "Actual power sensor readings and power supply status")
+        self._power_draw_card = SummaryCard("System Power Draw")
+        self._power_draw_card.setObjectName("metricCard")
+        self._power_draw_card.bar.hide()
+        self._power_source_card = SummaryCard("Power Supply")
+        self._power_source_card.setObjectName("metricCard")
+        self._power_source_card.bar.hide()
+        layout.addLayout(self._cards_row(self._power_draw_card, self._power_source_card))
+
+        self._power_graph = HistoryGraph(title="Power consumption", mode="watts", series_labels=["Total power"])
+        layout.addWidget(self._history_panel("Power consumption history", self._power_graph))
+
+        ps_panel = QtWidgets.QFrame()
+        ps_panel.setObjectName("detailPanel")
+        ps_lay = QtWidgets.QVBoxLayout(ps_panel)
+        ps_lay.setContentsMargins(16, 14, 16, 14)
+        ps_lay.setSpacing(10)
+        ps_lay.addWidget(self._section_title("Power supplies & chargers"))
+        self._power_supplies_container = QtWidgets.QVBoxLayout()
+        self._power_supplies_container.setSpacing(8)
+        self._power_supply_cards = []
+        self._no_power_supplies_label = QtWidgets.QLabel("No power supplies detected")
+        self._no_power_supplies_label.setObjectName("secondaryText")
+        self._no_power_supplies_label.setVisible(False)
+        self._power_supplies_container.addWidget(self._no_power_supplies_label)
+        ps_lay.addLayout(self._power_supplies_container)
+        layout.addWidget(ps_panel)
+
+        self._power_table = DetailTable(["Domain", "Measured watts"])
+        layout.addWidget(self._detail_panel("Measured power rails", self._power_table))
+
+    def _update_power_supply_cards(self, supplies):
+        if not supplies:
+            self._no_power_supplies_label.setVisible(True)
+            for card in self._power_supply_cards:
+                card.setVisible(False)
+            return
+        self._no_power_supplies_label.setVisible(False)
+        while len(self._power_supply_cards) < len(supplies):
+            card = PowerSupplyCard("Supply%d" % len(self._power_supply_cards))
+            self._power_supply_cards.append(card)
+            self._power_supplies_container.addWidget(card)
+        for i, card in enumerate(self._power_supply_cards):
+            if i < len(supplies):
+                card.setVisible(True)
+                card.update_supply(supplies[i])
+            else:
+                card.setVisible(False)
+
+    def _build_gpu_tab(self):
+        layout = self._add_scroll_tab("Graphics", "Graphics devices and available driver readings")
+        self._gpu_load_card = SummaryCard("Graphics Activity")
+        self._gpu_load_card.setObjectName("metricCard")
+        self._gpu_vram_card = SummaryCard("Video Memory")
+        self._gpu_vram_card.setObjectName("metricCard")
+        layout.addLayout(self._cards_row(self._gpu_load_card, self._gpu_vram_card))
+
+        self._gpu_graph = HistoryGraph(title="Graphics activity", mode="percent", series_labels=["GPU load"])
+        layout.addWidget(self._history_panel("Graphics activity", self._gpu_graph))
+
+        self._gpu_table = DetailTable(["GPU", "Vendor", "Driver", "Activity", "Clock", "Temperature", "VRAM used", "VRAM total"])
+        layout.addWidget(self._detail_panel("Graphics", self._gpu_table))
 
     def _table_tab(self, title, headers, description=""):
         layout = self._add_scroll_tab(title, description)
@@ -583,6 +856,15 @@ class MonitorWindow(QtWidgets.QMainWindow):
             self._summary_grid.setColumnStretch(column, 1 if column < columns else 0)
         for index, key in enumerate(("cpu", "memory", "battery", "storage", "temp", "net", "gpu", "fan")):
             self._summary_grid.addWidget(self._cards[key], index // columns, index % columns)
+        if hasattr(self, "_core_grid"):
+            core_cols = 4 if available >= 4 * 160 else 2 if available >= 2 * 160 else 1
+            self._core_grid.set_columns(core_cols)
+        if hasattr(self, "_thermal_grid"):
+            therm_cols = 3 if available >= 3 * 180 else 2 if available >= 2 * 180 else 1
+            self._thermal_grid.set_columns(therm_cols)
+        if hasattr(self, "_fan_grid"):
+            fan_cols = 2 if available >= 2 * 180 else 1
+            self._fan_grid.set_columns(fan_cols)
 
     def _build_worker(self):
         self._thread = QtCore.QThread(self)
@@ -637,7 +919,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
         self._refresh_icons()
         if self._paused:
             self._timer.stop()
-            self._graph.gap()
+            self._gap_all_graphs()
         else:
             self._tick()
         self._update_status()
@@ -704,7 +986,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
         self._update_status()
     def _on_failure(self, message):
         self._error = message
-        self._graph.gap()
+        self._gap_all_graphs()
         self._update_status()
         self._notice_label.setText("Collection failed. Existing readings may be stale. Press Refresh to retry.")
         self._warnings_label.setText("Last collection failed: %s" % message)
@@ -715,7 +997,8 @@ class MonitorWindow(QtWidgets.QMainWindow):
         self._device_detail.setText("%s · Kernel %s · %s" % (
             _text(system.get("architecture")), _text(system.get("kernel")),
             _text(system.get("platform_profile")) if system.get("platform_profile") else "Device readings"))
-        bits = [t for t in ((_text(cpu["governor"]) if cpu.get("governor") is not None else UNAVAILABLE), (_text(cpu["driver"]) if cpu.get("driver") is not None else UNAVAILABLE)) if t != UNAVAILABLE]
+        mode = system.get("platform_profile") or cpu.get("governor")
+        bits = [t for t in ((_text(mode) if mode is not None else UNAVAILABLE), (_text(cpu.get("driver")) if cpu.get("driver") is not None else UNAVAILABLE)) if t != UNAVAILABLE]
         self._cards["cpu"].set_value(fmt_percent(cpu.get("percent")), " \u00b7 ".join(bits) if bits else None)
         self._cpu_bar.set_usage(cpu.get("percent"), "CPU · " + fmt_percent(cpu.get("percent")))
         self._cards["memory"].set_value(fmt_percent(memory.get("percent")), "%s available of %s" % (fmt_bytes(memory.get("available_bytes")), fmt_bytes(memory.get("total_bytes"))))
@@ -730,6 +1013,8 @@ class MonitorWindow(QtWidgets.QMainWindow):
                 percentage = bats[0].get("percent")
                 summary = fmt_percent(percentage)
                 detail = _text(bats[0].get("status"))
+                if bats[0].get("charge_stop_threshold"):
+                    detail += " (limit %d%%)" % bats[0]["charge_stop_threshold"]
             else:
                 summary = " · ".join("%s %s" % (_text(b.get("name")), fmt_percent(b.get("percent"))) for b in bats)
                 detail = "%d packs · shown individually" % len(bats)
@@ -773,12 +1058,14 @@ class MonitorWindow(QtWidgets.QMainWindow):
             except (TypeError, ValueError):
                 continue
         if busy is None:
+            clock_detail = (" · " + fmt_mhz(gpus[0].get("frequency_mhz"))) if (gpus and gpus[0].get("frequency_mhz") is not None) else " · load unavailable"
             detail = "No GPU detected" if not gpus else ", ".join(
                 _text(g.get("vendor") or g.get("driver") or g.get("name")) for g in gpus
-            ) + " · load unavailable"
+            ) + clock_detail
             self._cards["gpu"].set_value(UNAVAILABLE, detail)
         else:
-            self._cards["gpu"].set_value(fmt_percent(busy.get("busy_percent")), _text(busy.get("name")))
+            clock_str = (" · " + fmt_mhz(busy.get("frequency_mhz"))) if busy.get("frequency_mhz") is not None else ""
+            self._cards["gpu"].set_value(fmt_percent(busy.get("busy_percent")), _text(busy.get("name")) + clock_str)
         fans = [f for f in _as_list(sample.get("fans")) if isinstance(f, dict)]
         spd = []
         for f in fans:
@@ -793,31 +1080,169 @@ class MonitorWindow(QtWidgets.QMainWindow):
         else:
             self._cards["fan"].set_value(fmt_rpm(max(spd)), "%d sensor(s)" % len(spd))
         self._graph.append(cpu.get("percent"), timestamp=self._last_updated)
+        self._cpu_detail_graph.append(cpu.get("percent"), timestamp=self._last_updated)
+
         per_core, freqs, load = _as_list(cpu.get("per_core_percent")), _as_list(cpu.get("frequencies_mhz")), _as_list(cpu.get("load_average"))
+        self._cpu_activity_card.set_value(fmt_percent(cpu.get("percent")), " \u00b7 ".join(bits) if bits else None)
+        self._cpu_activity_card.bar.set_usage(cpu.get("percent"))
+        self._cpu_loadavg_card.set_value(", ".join(fmt_num(x, 2) for x in load) if load else UNAVAILABLE, "1 min · 5 min · 15 min")
+        self._core_grid.update_cores(per_core, freqs)
+
         cpu_rows = [["Overall activity", fmt_percent(cpu.get("percent"))],
-                    ["Load average (1 / 5 / 15 min)", ", ".join(fmt_num(x, 2) for x in load) if load else UNAVAILABLE],
-                    ["Governor", _text(cpu.get("governor"))], ["Scaling driver", _text(cpu.get("driver"))]]
+                    ["Load average (1 / 5 / 15 min)", ", ".join(fmt_num(x, 2) for x in load) if load else UNAVAILABLE]]
+        if system.get("platform_profile"):
+            cpu_rows.append(["Platform profile", _text(system.get("platform_profile"))])
+        if cpu.get("energy_performance_preference"):
+            cpu_rows.append(["Energy preference (EPP)", _text(cpu.get("energy_performance_preference"))])
+        cpu_rows.extend([
+            ["Scaling governor", _text(cpu.get("governor"))],
+            ["Scaling driver", _text(cpu.get("driver"))],
+        ])
         for index in range(max(len(per_core), len(freqs))):
             activity = per_core[index] if index < len(per_core) else None
             frequency = freqs[index] if index < len(freqs) else None
             cpu_rows.append(["Core %d" % index, "%s · %s" % (fmt_percent(activity), fmt_mhz(frequency))])
         self._cpu_table.set_rows(cpu_rows)
+
+        self._mem_ram_card.set_value(fmt_percent(memory.get("percent")), "%s available of %s" % (fmt_bytes(memory.get("available_bytes")), fmt_bytes(memory.get("total_bytes"))))
+        self._mem_ram_card.bar.set_usage(memory.get("percent"))
+        self._mem_swap_card.set_value(fmt_percent(memory.get("swap_percent")), "%s used of %s" % (fmt_bytes(memory.get("swap_used_bytes")), fmt_bytes(memory.get("swap_total_bytes"))))
+        self._mem_swap_card.bar.set_usage(memory.get("swap_percent"))
+        self._mem_graph.append(memory.get("percent"), timestamp=self._last_updated)
         self._mem_table.set_rows([["Total", fmt_bytes(memory.get("total_bytes"))], ["Used", fmt_bytes(memory.get("used_bytes"))], ["Available", fmt_bytes(memory.get("available_bytes"))], ["Used %", fmt_percent(memory.get("percent"))], ["Swap total", fmt_bytes(memory.get("swap_total_bytes"))], ["Swap used", fmt_bytes(memory.get("swap_used_bytes"))], ["Swap %", fmt_percent(memory.get("swap_percent"))]])
+
+        r_rate, w_rate = storage.get("read_bytes_per_second"), storage.get("write_bytes_per_second")
+        self._storage_fs_card.set_value(fmt_percent(storage.get("percent")), "%s / %s" % (fmt_bytes(storage.get("used_bytes")), fmt_bytes(storage.get("total_bytes"))))
+        self._storage_fs_card.bar.set_usage(storage.get("percent"))
+        io_detail = ("\u2193 %s  \u2191 %s" % (fmt_rate(r_rate), fmt_rate(w_rate))) if (r_rate is not None or w_rate is not None) else None
+        tot_io = ((r_rate or 0) + (w_rate or 0)) if (r_rate is not None or w_rate is not None) else None
+        self._storage_io_card.set_value(fmt_rate(tot_io), io_detail)
+        self._storage_graph.append(r_rate, w_rate, timestamp=self._last_updated)
         self._storage_table.set_rows([["Total", fmt_bytes(storage.get("total_bytes"))], ["Used", fmt_bytes(storage.get("used_bytes"))], ["Used %", fmt_percent(storage.get("percent"))], ["Read rate", fmt_rate(storage.get("read_bytes_per_second"))], ["Write rate", fmt_rate(storage.get("write_bytes_per_second"))]])
+
+        self._update_battery_cards(bats)
+        tot_bat_w = 0.0
+        has_bat_w = False
+        for b in bats:
+            w = b.get("power_watts")
+            if w is not None and isinstance(w, (int, float)):
+                tot_bat_w += float(w)
+                has_bat_w = True
+        self._battery_graph.append(tot_bat_w if has_bat_w else None, timestamp=self._last_updated)
         rows = [[_text(e.get("name")), _text(e.get("status")), fmt_percent(e.get("percent")), fmt_percent(e.get("health_percent")), fmt_int(e.get("cycles")), fmt_volts(e.get("voltage_volts")), fmt_watts(e.get("power_watts")), "%s / %s Wh" % (fmt_num(e.get("energy_wh"), 1), fmt_num(e.get("full_energy_wh"), 1)), fmt_duration(e.get("time_remaining_seconds"))] for e in bats]
         self._battery_table.set_rows(rows or [["No batteries detected"] + [""] * 8])
+
+        if act is None:
+            self._net_active_card.set_value(UNAVAILABLE, "No active interface" if not nets else None)
+        else:
+            self._net_active_card.set_value(_text(act.get("name")), "\u2193 %s  \u2191 %s" % (fmt_rate(act.get("rx_bytes_per_second")), fmt_rate(act.get("tx_bytes_per_second"))))
+        tot_rx = sum(n.get("received_bytes") or 0 for n in active) if active else None
+        tot_tx = sum(n.get("sent_bytes") or 0 for n in active) if active else None
+        self._net_totals_card.set_value(fmt_bytes(((tot_rx or 0) + (tot_tx or 0)) if (tot_rx is not None or tot_tx is not None) else None), ("\u2193 %s  \u2191 %s" % (fmt_bytes(tot_rx), fmt_bytes(tot_tx))) if (tot_rx is not None or tot_tx is not None) else None)
+        self._net_graph.append(act.get("rx_bytes_per_second") if act else None, act.get("tx_bytes_per_second") if act else None, timestamp=self._last_updated)
         nrows = []
         for e in nets:
             addrs = _as_list(e.get("addresses"))
             up = e.get("is_up")
             nrows.append([_text(e.get("name")), "Yes" if up else ("No" if up is not None else UNAVAILABLE), ", ".join(_text(a) for a in addrs) if addrs else UNAVAILABLE, fmt_rate(e.get("rx_bytes_per_second")), fmt_rate(e.get("tx_bytes_per_second")), fmt_bytes(e.get("received_bytes")), fmt_bytes(e.get("sent_bytes"))])
         self._net_table.set_rows(nrows or [["No network interfaces"] + [""] * 6])
+
+        if hot is None:
+            self._therm_peak_card.set_value(UNAVAILABLE, "No temperature sensors" if not temps else None)
+        else:
+            self._therm_peak_card.set_value(fmt_celsius(hotv), _text(hot.get("label") or hot.get("name")))
+        if not spd:
+            self._therm_fan_card.set_value(UNAVAILABLE, "No fan sensors" if not fans else None)
+        else:
+            self._therm_fan_card.set_value(fmt_rpm(max(spd)), "%d sensor(s)" % len(spd))
+        self._therm_graph.append(hotv, timestamp=self._last_updated)
+        self._fan_graph.append(max(spd) if spd else None, timestamp=self._last_updated)
+        self._thermal_grid.update_sensors(temps)
+        self._fan_grid.update_fans(fans)
         self._temp_table.set_rows([[_text(t.get("name")), _text(t.get("label")), fmt_celsius(t.get("celsius")), fmt_celsius(t.get("critical_celsius"))] for t in temps] or [["No temperature sensors"] + [""] * 3])
         self._fan_table.set_rows([[_text(f.get("name")), _text(f.get("label")), fmt_rpm(f.get("rpm"))] for f in fans] or [["No fan sensors"] + [""] * 2])
-        self._gpu_table.set_rows([[_text(g.get("name")), _text(g.get("vendor")), _text(g.get("driver")), fmt_percent(g.get("busy_percent")), fmt_celsius(g.get("temperature_celsius")), fmt_bytes(g.get("memory_used_bytes")), fmt_bytes(g.get("memory_total_bytes"))] for g in gpus] or [["No GPUs detected"] + [""] * 6])
+
+        if busy is None:
+            clock_detail = (" · " + fmt_mhz(gpus[0].get("frequency_mhz"))) if (gpus and gpus[0].get("frequency_mhz") is not None) else " · load unavailable"
+            detail = "No GPU detected" if not gpus else ", ".join(
+                _text(g.get("vendor") or g.get("driver") or g.get("name")) for g in gpus
+            ) + clock_detail
+            self._gpu_load_card.set_value(UNAVAILABLE, detail)
+            self._gpu_load_card.bar.set_usage(None)
+        else:
+            clock_str = (" · " + fmt_mhz(busy.get("frequency_mhz"))) if busy.get("frequency_mhz") is not None else ""
+            self._gpu_load_card.set_value(fmt_percent(busy.get("busy_percent")), _text(busy.get("name")) + clock_str)
+            self._gpu_load_card.bar.set_usage(busy.get("busy_percent"))
+        self._gpu_graph.append(busy.get("busy_percent") if busy else None, timestamp=self._last_updated)
+        target_gpu = busy or (gpus[0] if gpus else None)
+        if target_gpu and (target_gpu.get("memory_used_bytes") is not None or target_gpu.get("memory_total_bytes") is not None):
+            u_v = target_gpu.get("memory_used_bytes")
+            t_v = target_gpu.get("memory_total_bytes")
+            p_v = (100.0 * u_v / t_v) if (u_v is not None and t_v) else None
+            self._gpu_vram_card.set_value(fmt_percent(p_v), "%s / %s" % (fmt_bytes(u_v), fmt_bytes(t_v)))
+            self._gpu_vram_card.bar.set_usage(p_v)
+        else:
+            self._gpu_vram_card.set_value(UNAVAILABLE, "VRAM metrics unavailable")
+            self._gpu_vram_card.bar.set_usage(None)
+        self._gpu_table.set_rows([[_text(g.get("name")), _text(g.get("vendor")), _text(g.get("driver")), fmt_percent(g.get("busy_percent")), fmt_mhz(g.get("frequency_mhz")), fmt_celsius(g.get("temperature_celsius")), fmt_bytes(g.get("memory_used_bytes")), fmt_bytes(g.get("memory_total_bytes"))] for g in gpus] or [["No GPUs detected"] + [""] * 7])
         powers = [p for p in _as_list(sample.get("power")) if isinstance(p, dict)]
-        self._power_table.set_rows([[_text(p.get("name")), fmt_watts(p.get("watts"))] for p in powers] or [["No readable power sensor", "Unavailable"]])
-        self._system_table.set_rows([["Hostname", _text(system.get("hostname"))], ["Model", _text(system.get("model"))], ["Architecture", _text(system.get("architecture"))], ["Kernel", _text(system.get("kernel"))], ["Uptime", fmt_duration(system.get("uptime_seconds"))], ["Profile", _text(system.get("platform_profile"))]])
+        tot_p_w = 0.0
+        has_p_w = False
+        for p in powers:
+            w = p.get("watts")
+            if w is not None and isinstance(w, (int, float)):
+                tot_p_w += float(w)
+                has_p_w = True
+        if has_p_w:
+            self._power_draw_card.set_value(fmt_watts(tot_p_w), f"{len(powers)} domain{'s' if len(powers) != 1 else ''} reporting")
+            self._power_graph.append(tot_p_w, timestamp=self._last_updated)
+        else:
+            self._power_draw_card.set_value(UNAVAILABLE, "No readable power sensor")
+            self._power_graph.append(None, timestamp=self._last_updated)
+
+        supplies = [ps for ps in _as_list(sample.get("power_supplies")) if isinstance(ps, dict)]
+        self._update_power_supply_cards(supplies)
+        if supplies:
+            primary = supplies[0]
+            online = primary.get("online")
+            st_text = "Connected" if online is True else ("Disconnected" if online is False else _text(primary.get("status")))
+            typ = primary.get("type") or "Power supply"
+            volts = primary.get("voltage_volts")
+            amps = primary.get("current_amperes")
+            detail_parts = [typ]
+            if volts is not None and amps is not None:
+                detail_parts.append(fmt_watts(volts * amps))
+            elif volts is not None:
+                detail_parts.append(fmt_volts(volts))
+            self._power_source_card.set_value(st_text, " · ".join(detail_parts))
+        else:
+            self._power_source_card.set_value("Battery only", "No external power supply detected")
+
+        if powers:
+            self._power_table.set_rows([[_text(p.get("name")), fmt_watts(p.get("watts"))] for p in powers])
+        else:
+            warns = _as_list(sample.get("warnings"))
+            rapl_warn = any("RAPL" in _text(w) or "rapl" in _text(w) for w in warns)
+            if rapl_warn:
+                self._power_table.set_rows([["Intel RAPL (CPU / DRAM)", "Requires root or udev rule (restricted by kernel)"]])
+            else:
+                self._power_table.set_rows([["No readable power sensor", "Unavailable"]])
+        sys_rows = [["Hostname", _text(system.get("hostname"))], ["Model", _text(system.get("model"))], ["Architecture", _text(system.get("architecture"))], ["Kernel", _text(system.get("kernel"))], ["Uptime", fmt_duration(system.get("uptime_seconds"))], ["Profile", _text(system.get("platform_profile"))]]
+        for ps in _as_list(sample.get("power_supplies")):
+            if not isinstance(ps, dict):
+                continue
+            ps_name = ps.get("name") or "Power supply"
+            status_parts = []
+            if ps.get("online") is True:
+                status_parts.append("Connected")
+            elif ps.get("online") is False:
+                status_parts.append("Disconnected")
+            if ps.get("current_amperes") is not None:
+                status_parts.append(fmt_num(ps.get("current_amperes"), 2, " A"))
+            if ps.get("usb_type"):
+                status_parts.append(ps.get("usb_type"))
+            sys_rows.append([f"Power supply ({ps_name})", " · ".join(status_parts) if status_parts else _text(ps.get("status"))])
+        self._system_table.set_rows(sys_rows)
         warns = _as_list(sample.get("warnings"))
         self._warnings_label.setText("\n".join("• " + _text(w) for w in warns) if warns else "All detected sensor files are readable. Some metrics may still be unavailable if the hardware does not provide them.")
         self._notice_label.setText("Some sensor files cannot be read. See System for details." if warns else

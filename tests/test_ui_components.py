@@ -15,6 +15,15 @@ from thinkpad_monitor.ui_components import (
     CPU_HISTORY_LIMIT,
     UNAVAILABLE,
     CpuGraph,
+    HistoryGraph,
+    CoreBarWidget,
+    PerCoreGrid,
+    BatteryPackCard,
+    PowerSupplyCard,
+    ThermalZoneBar,
+    ThermalZoneGrid,
+    FanMeterWidget,
+    FanSpeedGrid,
     DetailTable,
     SummaryCard,
     UsageBar,
@@ -343,5 +352,211 @@ class DetailTableTest(unittest.TestCase):
             table.deleteLater()
 
 
+class HistoryGraphTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        ensure_app()
+
+    def test_rate_graph_dual_series_and_auto_scale(self):
+        g = HistoryGraph(limit=5, title="Network", mode="rate", series_count=2, series_labels=["Down", "Up"])
+        try:
+            self.assertEqual(g.samples, [])
+            g.append(1024, 2048, timestamp=100.0)
+            g.append(4096, 8192, timestamp=101.0)
+            self.assertEqual(len(g.samples), 2)
+            self.assertEqual(g.samples[0], (1024.0, 2048.0))
+            self.assertEqual(g.samples[1], (4096.0, 8192.0))
+            g.append(None, None)
+            self.assertEqual(len(g.samples), 2)
+            g.append(100, 200, timestamp=102.0)
+            self.assertEqual(len(g.samples), 3)
+            self.assertTrue(g._breaks)
+            g.resize(400, 200)
+            g.show()
+            ensure_app().processEvents()
+            self.assertFalse(g.grab().isNull())
+        finally:
+            g.deleteLater()
+
+    def test_temp_graph(self):
+        g = HistoryGraph(limit=10, title="Thermals", mode="temp", series_labels=["Hottest"])
+        try:
+            g.append(45.5, timestamp=10.0)
+            g.append(65.0, timestamp=11.0)
+            g.resize(400, 200)
+            g.show()
+            ensure_app().processEvents()
+            self.assertFalse(g.grab().isNull())
+        finally:
+            g.deleteLater()
+
+    def test_watts_and_rpm_graph(self):
+        gw = HistoryGraph(limit=10, title="Power", mode="watts", series_labels=["Power"])
+        gr = HistoryGraph(limit=10, title="Fans", mode="rpm", series_labels=["RPM"])
+        try:
+            gw.append(15.2, timestamp=10.0)
+            gw.append(35.8, timestamp=11.0)
+            self.assertEqual(gw.samples, [15.2, 35.8])
+            self.assertIn("35.8 W", gw.accessibleDescription())
+            gw.resize(400, 200)
+            gw.show()
+            ensure_app().processEvents()
+            self.assertFalse(gw.grab().isNull())
+
+            gr.append(1800, timestamp=10.0)
+            gr.append(3200, timestamp=11.0)
+            self.assertEqual(gr.samples, [1800.0, 3200.0])
+            self.assertIn("3200 RPM", gr.accessibleDescription())
+            gr.resize(400, 200)
+            gr.show()
+            ensure_app().processEvents()
+            self.assertFalse(gr.grab().isNull())
+        finally:
+            gw.deleteLater()
+            gr.deleteLater()
+
+
+class PerCoreGridTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        ensure_app()
+
+    def test_update_cores_and_columns(self):
+        grid = PerCoreGrid()
+        try:
+            grid.update_cores([10.0, 50.0, 90.0, 30.0], [2000.0, 2200.0, 2400.0, 2100.0])
+            self.assertEqual(len(grid._widgets), 4)
+            self.assertEqual(grid._widgets[0]._title.text(), "Core 0")
+            self.assertIn("2000", grid._widgets[0]._freq.text())
+            self.assertEqual(grid._widgets[0].bar.value(), 10)
+            grid.set_columns(2)
+            self.assertEqual(grid._columns, 2)
+            grid.update_cores([20.0] * 8, [2400.0] * 8)
+            self.assertEqual(len(grid._widgets), 8)
+        finally:
+            grid.deleteLater()
+
+
+class BatteryPackCardTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        ensure_app()
+
+    def test_update_pack(self):
+        card = BatteryPackCard("BAT0")
+        try:
+            card.update_pack({
+                "name": "BAT0",
+                "status": "Discharging",
+                "percent": 85.0,
+                "health_percent": 96.0,
+                "cycles": 120,
+                "voltage_volts": 11.5,
+                "power_watts": 12.0,
+                "energy_wh": 45.0,
+                "full_energy_wh": 50.0,
+                "time_remaining_seconds": 7200,
+                "charge_stop_threshold": 90,
+            })
+            self.assertIn("BAT0", card._name_label.text())
+            self.assertIn("Discharging", card._status_badge.text())
+            self.assertIn("limit 90%", card._status_badge.text())
+            self.assertEqual(card.charge_bar.value(), 85)
+            self.assertEqual(card.health_bar.value(), 96)
+            self.assertIn("120 cycles", card._health_detail.text())
+            self.assertIn("11.50 V", card._stats_label.text())
+            self.assertIn("12.0 W", card._stats_label.text())
+            self.assertIn("2h 00m", card._stats_label.text())
+        finally:
+            card.deleteLater()
+
+
+class PowerSupplyCardTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        ensure_app()
+
+    def test_update_supply_connected_and_disconnected(self):
+        card = PowerSupplyCard("AC")
+        try:
+            card.update_supply({
+                "name": "AC",
+                "type": "Mains",
+                "online": True,
+                "voltage_volts": 20.0,
+                "current_amperes": 3.25,
+                "usb_type": "C",
+            })
+            self.assertEqual(card._name_label.text(), "AC")
+            self.assertEqual(card._status_badge.text(), "Connected")
+            self.assertIn("Mains", card._type_label.text())
+            self.assertIn("C", card._type_label.text())
+            self.assertIn("20.00 V", card._specs_label.text())
+            self.assertIn("3.25 A", card._specs_label.text())
+            self.assertIn("65.0 W", card._specs_label.text())
+            self.assertIn("AC: Connected", card.accessibleName())
+
+            card.update_supply({
+                "name": "AC",
+                "type": "Mains",
+                "online": False,
+            })
+            self.assertEqual(card._status_badge.text(), "Disconnected")
+            self.assertIn("No electrical telemetry", card._specs_label.text())
+        finally:
+            card.deleteLater()
+
+
+class ThermalZoneGridTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        ensure_app()
+
+    def test_update_sensors_and_columns(self):
+        grid = ThermalZoneGrid()
+        try:
+            grid.update_sensors([
+                {"name": "coretemp-cpu", "label": "CPU Package", "celsius": 48.0, "critical_celsius": 100.0},
+                {"name": "nvme-0", "label": "NVMe SSD", "celsius": 42.0, "critical_celsius": 84.0},
+            ])
+            self.assertEqual(len(grid._widgets), 2)
+            self.assertEqual(grid._widgets[0]._title.text(), "CPU Package")
+            self.assertIn("48.0 °C", grid._widgets[0]._temp_label.text())
+            self.assertEqual(grid._widgets[0].bar.value(), 48)
+
+            grid.set_columns(1)
+            self.assertEqual(grid._columns, 1)
+
+            grid.update_sensors([])
+            self.assertFalse(grid._no_sensors_label.isHidden())
+        finally:
+            grid.deleteLater()
+
+
+class FanSpeedGridTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        ensure_app()
+
+    def test_update_fans_active_and_off(self):
+        grid = FanSpeedGrid()
+        try:
+            grid.update_fans([
+                {"name": "thinkpad/hwmon-fan1", "label": "CPU Fan", "rpm": 3200.0},
+                {"name": "thinkpad/hwmon-fan2", "label": "GPU Fan", "rpm": 0.0},
+            ])
+            self.assertEqual(len(grid._widgets), 2)
+            self.assertEqual(grid._widgets[0]._title.text(), "CPU Fan")
+            self.assertIn("3200 RPM", grid._widgets[0]._rpm_label.text())
+            self.assertIn("Off / 0 RPM", grid._widgets[1]._rpm_label.text())
+
+            grid.update_fans([])
+            self.assertFalse(grid._no_fans_label.isHidden())
+        finally:
+            grid.deleteLater()
+
+
 if __name__ == "__main__":
     unittest.main()
+
+

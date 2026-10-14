@@ -16,6 +16,7 @@ Fixed unit conversions (no heuristics):
   RAPL energy_uj            : microjoule     -> J  (/1e6)
 """
 
+import errno
 import math
 import os
 import platform
@@ -77,6 +78,7 @@ class Collector:
         self._prev_disk = None       # (read_bytes, write_bytes, t)
         self._prev_net = {}          # iface -> (rx, tx, t)
         self._prev_rapl = {}         # energy_path -> (energy_uj, t)
+        self._prev_rc6 = {}          # card -> (rc6_ms, t)
 
     # -- low level helpers -------------------------------------------------
     def _p(self, *parts):
@@ -88,7 +90,9 @@ class Collector:
                 return f.read().strip()
         except FileNotFoundError:
             return None
-        except (PermissionError, OSError):
+        except OSError as e:
+            if getattr(e, "errno", None) in (errno.ENXIO, errno.ENODEV):
+                return None
             raise
         except Exception:
             return None
@@ -99,7 +103,9 @@ class Collector:
                 return _clean_num(float(f.read().strip()))
         except FileNotFoundError:
             return None
-        except (PermissionError, OSError):
+        except OSError as e:
+            if getattr(e, "errno", None) in (errno.ENXIO, errno.ENODEV):
+                return None
             raise
         except (ValueError, Exception):
             return None
@@ -110,7 +116,9 @@ class Collector:
                 return int(float(f.read().strip()))
         except FileNotFoundError:
             return None
-        except (PermissionError, OSError):
+        except OSError as e:
+            if getattr(e, "errno", None) in (errno.ENXIO, errno.ENODEV):
+                return None
             raise
         except (ValueError, Exception):
             return None
@@ -136,9 +144,10 @@ class Collector:
         data["storage"] = self._sample_storage(now, warnings)
         data["networks"] = self._sample_networks(now, warnings)
         data["batteries"] = self._sample_batteries(warnings)
+        data["power_supplies"] = self._sample_power_supplies(warnings)
         data["temperatures"] = self._sample_temperatures(warnings)
         data["fans"] = self._sample_fans(warnings)
-        data["gpus"] = self._sample_gpus(warnings)
+        data["gpus"] = self._sample_gpus(now, warnings)
         data["power"] = self._sample_power(now, warnings)
         data["warnings"] = warnings
         return data
@@ -256,8 +265,7 @@ class Collector:
             warnings.append(f"cpu: load average unavailable: {e}")
             load = [None, None, None]
 
-        governor = None
-        driver = None
+        epp = None
         try:
             governor = self._read_text(self._p(
                 self.sys_root, "devices/system/cpu/cpu0/cpufreq/scaling_governor"))
@@ -268,6 +276,11 @@ class Collector:
                 self.sys_root, "devices/system/cpu/cpu0/cpufreq/scaling_driver"))
         except (PermissionError, OSError) as e:
             warnings.append(f"cpu: driver unreadable: {e}")
+        try:
+            epp = self._read_text(self._p(
+                self.sys_root, "devices/system/cpu/cpu0/cpufreq/energy_performance_preference"))
+        except (PermissionError, OSError):
+            pass
         return {
             "percent": percent,
             "per_core_percent": per_core,
@@ -275,6 +288,7 @@ class Collector:
             "load_average": load,
             "governor": governor,
             "driver": driver,
+            "energy_performance_preference": epp,
         }
 
     def _cpu_freqs_sysfs(self, warnings):
@@ -602,6 +616,19 @@ class Collector:
         except Exception:
             remaining = None
 
+        start_threshold = geti("charge_control_start_threshold")
+        if start_threshold is None:
+            start_threshold = geti("charge_start_threshold")
+
+        stop_threshold = geti("charge_control_end_threshold")
+        if stop_threshold is None:
+            stop_threshold = geti("charge_stop_threshold")
+
+        technology = get("technology")
+        manufacturer = get("manufacturer")
+        model_name = get("model_name")
+        capacity_level = get("capacity_level")
+
         return {
             "name": name,
             "status": status,
@@ -613,7 +640,78 @@ class Collector:
             "energy_wh": energy_wh,
             "full_energy_wh": full_wh,
             "time_remaining_seconds": remaining,
+            "charge_start_threshold": start_threshold,
+            "charge_stop_threshold": stop_threshold,
+            "technology": technology,
+            "manufacturer": manufacturer,
+            "model_name": model_name,
+            "capacity_level": capacity_level,
         }
+
+    # -- power supplies ---------------------------------------------------
+    def _sample_power_supplies(self, warnings):
+        base = self._p(self.sys_root, "class/power_supply")
+        out = []
+        try:
+            entries = self._listdir(base)
+        except (PermissionError, OSError) as e:
+            warnings.append(f"power_supplies: power_supply scan unreadable: {e}")
+            return []
+        for name in entries:
+            sdir = self._p(base, name)
+            try:
+                typ = self._read_text(self._p(sdir, "type"))
+            except (PermissionError, OSError):
+                continue
+            if not typ or typ == "Battery":
+                continue
+
+            online = None
+            try:
+                on_val = self._read_int(self._p(sdir, "online"))
+                if on_val is not None:
+                    online = bool(on_val)
+            except (PermissionError, OSError):
+                pass
+
+            status = None
+            try:
+                status = self._read_text(self._p(sdir, "status"))
+            except (PermissionError, OSError):
+                pass
+
+            usb_type = None
+            try:
+                usb_type = self._read_text(self._p(sdir, "usb_type"))
+            except (PermissionError, OSError):
+                pass
+
+            voltage = None
+            try:
+                v_raw = self._read_float(self._p(sdir, "voltage_now"))
+                if v_raw is not None and v_raw > 0:
+                    voltage = _clean_num(v_raw / 1e6)
+            except (PermissionError, OSError):
+                pass
+
+            current = None
+            try:
+                c_raw = self._read_float(self._p(sdir, "current_now"))
+                if c_raw is not None and c_raw > 0:
+                    current = _clean_num(c_raw / 1e6)
+            except (PermissionError, OSError):
+                pass
+
+            out.append({
+                "name": name,
+                "type": typ,
+                "online": online,
+                "status": status,
+                "usb_type": usb_type,
+                "voltage_volts": voltage,
+                "current_amperes": current,
+            })
+        return out
 
     # -- temperatures ------------------------------------------------------
     def _sample_temperatures(self, warnings):
@@ -645,8 +743,16 @@ class Collector:
                 ipath = self._p(hdir, f)
                 try:
                     raw = self._read_float(ipath)
-                except (PermissionError, OSError):
+                except PermissionError:
                     warnings.append(f"temperatures: {chip}/{sensor} unreadable (permission)")
+                    continue
+                except OSError as e:
+                    if getattr(e, "errno", None) in (errno.ENXIO, errno.ENODEV):
+                        continue
+                    if getattr(e, "errno", None) in (errno.EACCES, errno.EPERM):
+                        warnings.append(f"temperatures: {chip}/{sensor} unreadable (permission)")
+                    else:
+                        warnings.append(f"temperatures: {chip}/{sensor} unreadable: {e}")
                     continue
                 if raw is None:
                     continue
@@ -770,8 +876,9 @@ class Collector:
         return out
 
     # -- gpus --------------------------------------------------------------
-    def _sample_gpus(self, warnings):
+    def _sample_gpus(self, now, warnings):
         out = []
+        new_rc6 = {}
         drm_base = self._p(self.sys_root, "class/drm")
         try:
             entries = self._listdir(drm_base)
@@ -817,6 +924,35 @@ class Collector:
             if braw is not None:
                 busy = _clean_num(braw)
 
+            if busy is None:
+                rc6_path = None
+                for cand in (
+                    self._p(self.sys_root, "class/drm", card, "gt/gt0/rc6_residency_ms"),
+                    self._p(self.sys_root, "class/drm", card, "gt/rc6_residency_ms"),
+                    self._p(devdir, "drm", card, "gt/gt0/rc6_residency_ms"),
+                ):
+                    if os.path.exists(cand):
+                        rc6_path = cand
+                        break
+                if rc6_path:
+                    try:
+                        rc6_raw = self._read_float(rc6_path)
+                    except (PermissionError, OSError):
+                        rc6_raw = None
+                    if rc6_raw is not None:
+                        prev_rc6 = self._prev_rc6.get(card)
+                        if prev_rc6 is not None:
+                            p_rc6, p_t = prev_rc6
+                            dt_ms = (now - p_t) * 1000.0
+                            d_rc6 = rc6_raw - p_rc6
+                            if dt_ms > 0 and d_rc6 >= 0:
+                                sleep_pct = min(100.0, (d_rc6 / dt_ms) * 100.0)
+                                busy = _clean_num(round(max(0.0, 100.0 - sleep_pct), 1))
+                        else:
+                            busy = 0.0
+                        new_rc6[card] = (rc6_raw, now)
+
+            freq = self._gpu_freq(card, devdir)
             temp = self._gpu_temp(devdir, warnings, card)
 
             mem_used = None
@@ -839,11 +975,66 @@ class Collector:
                 "vendor": vendor,
                 "driver": driver,
                 "busy_percent": busy,
+                "frequency_mhz": freq,
                 "temperature_celsius": temp,
                 "memory_used_bytes": mem_used,
                 "memory_total_bytes": mem_total,
             })
+        self._prev_rc6 = new_rc6
         return out
+
+    def _gpu_freq(self, card, devdir):
+        # 1. Intel DRM sysfs paths
+        card_dir = self._p(self.sys_root, "class/drm", card)
+        candidates = [
+            (self._p(card_dir, "gt/gt0/rps_act_freq_mhz"), self._p(card_dir, "gt/gt0/rps_cur_freq_mhz")),
+            (self._p(card_dir, "gt_act_freq_mhz"), self._p(card_dir, "gt_cur_freq_mhz")),
+            (self._p(devdir, "drm", card, "gt/gt0/rps_act_freq_mhz"), self._p(devdir, "drm", card, "gt/gt0/rps_cur_freq_mhz")),
+            (self._p(devdir, "drm", card, "gt_act_freq_mhz"), self._p(devdir, "drm", card, "gt_cur_freq_mhz")),
+        ]
+        for act_path, cur_path in candidates:
+            act_val = None
+            try:
+                act_val = self._read_float(act_path)
+            except (PermissionError, OSError):
+                pass
+            if act_val is not None and act_val > 0:
+                return _clean_num(act_val)
+            try:
+                cur_val = self._read_float(cur_path)
+                if cur_val is not None and cur_val > 0:
+                    return _clean_num(cur_val)
+            except (PermissionError, OSError):
+                pass
+
+        # 2. AMD DPM (pp_dpm_sclk)
+        try:
+            sclk_path = self._p(devdir, "pp_dpm_sclk")
+            content = self._read_text(sclk_path)
+            if content:
+                for line in content.splitlines():
+                    if "*" in line and ":" in line:
+                        parts = line.split(":")
+                        if len(parts) > 1:
+                            val_str = parts[1].split("M")[0].strip()
+                            v = float(val_str)
+                            if v >= 0:
+                                return _clean_num(v)
+        except Exception:
+            pass
+
+        # 3. hwmon freq1_input
+        for sub in ("hwmon",):
+            hbase = self._p(devdir, sub)
+            for s in self._listdir(hbase):
+                try:
+                    fpath = self._p(hbase, s, "freq1_input")
+                    raw = self._read_float(fpath)
+                    if raw is not None and raw > 0:
+                        return _clean_num(raw / 1e6)
+                except Exception:
+                    pass
+        return None
 
     def _gpu_temp(self, devdir, warnings, card):
         # 1. nested hwmon under the drm device
@@ -885,6 +1076,31 @@ class Collector:
                 continue
             if raw is not None:
                 return _clean_num(raw / 1000.0)
+
+        # 3. Fallback: platform hwmon sensor with label 'GPU'
+        for hw in hwmons:
+            hdir = self._p(hwmon_base, hw)
+            try:
+                files = self._listdir(hdir)
+            except (PermissionError, OSError):
+                continue
+            for f in files:
+                m = _TEMP_INPUT_RE.match(f)
+                if not m:
+                    continue
+                sensor = m.group(1)
+                lbl = None
+                try:
+                    lbl = self._read_text(self._p(hdir, f"{sensor}_label"))
+                except (PermissionError, OSError):
+                    pass
+                if lbl and lbl.strip().lower() in ("gpu", "gpu temp", "gpu temperature"):
+                    try:
+                        raw = self._read_float(self._p(hdir, f))
+                    except (PermissionError, OSError):
+                        continue
+                    if raw is not None and raw > 0:
+                        return _clean_num(raw / 1000.0)
         return None
 
     # -- power -------------------------------------------------------------
@@ -940,6 +1156,7 @@ class Collector:
             warnings.append(f"power: powercap scan unreadable: {e}")
             domains = []
         new_prev = {}
+        rapl_perm_errs = []
         for dom in sorted(domains):
             if "rapl" not in dom.lower():
                 continue
@@ -947,8 +1164,16 @@ class Collector:
             epath = self._p(ddir, "energy_uj")
             try:
                 cur = self._read_float(epath)
-            except (PermissionError, OSError):
-                warnings.append(f"power: {dom} energy unreadable (permission)")
+            except PermissionError:
+                rapl_perm_errs.append(dom)
+                continue
+            except OSError as e:
+                if getattr(e, "errno", None) in (errno.ENXIO, errno.ENODEV):
+                    continue
+                if getattr(e, "errno", None) in (errno.EACCES, errno.EPERM):
+                    rapl_perm_errs.append(dom)
+                else:
+                    warnings.append(f"power: {dom} energy unreadable: {e}")
                 continue
             if cur is None:
                 # no energy_uj (e.g. constraint-only entry): skip silently,
@@ -985,5 +1210,9 @@ class Collector:
                     watts = 0.0
             new_prev[epath] = (cur_uj, now)
             out.append({"name": dname, "watts": watts})
+        if rapl_perm_errs:
+            warnings.append(
+                f"power: CPU RAPL energy counters (powercap) require root access or udev rule due to Linux security restriction ({', '.join(rapl_perm_errs)})"
+            )
         self._prev_rapl = new_prev
         return out

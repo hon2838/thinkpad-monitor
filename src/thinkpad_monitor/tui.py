@@ -13,20 +13,37 @@ def lines(snapshot):
     cpu = snapshot.get("cpu", {})
     memory = snapshot.get("memory", {})
     storage = snapshot.get("storage", {})
+    profile = system.get("platform_profile")
+    mode_str = f" | {profile}" if profile else (f" | {cpu.get('governor')}" if cpu.get("governor") else "")
     result = ["LAPTOP MONITOR · q quit / Space pause / ↑↓ scroll", "",
-              f"{system.get('model') or 'Linux computer'} | {system.get('architecture') or 'Unknown architecture'}",
+              f"{system.get('model') or 'Linux computer'} | {system.get('architecture') or 'Unknown architecture'}{mode_str}",
               f"CPU {value(cpu.get('percent'), '%')} | RAM {value(memory.get('percent'), '%')} | Disk {value(storage.get('percent'), '%')}",
               "", "CPU cores"]
     freqs = cpu.get("frequencies_mhz", [])
     for i, load in enumerate(cpu.get("per_core_percent", [])):
         frequency = freqs[i] if i < len(freqs) else None
         result.append(f"  {i:3}: {value(load, '%'):>12} {value(frequency, ' MHz')}")
+    def render_bat(d):
+        lim = f" (limit {d['charge_stop_threshold']}%)" if d.get("charge_stop_threshold") else ""
+        return f"{d.get('name')}: {value(d.get('percent'), '%')} {d.get('status') or 'Unknown'}{lim} | {value(d.get('power_watts'), ' W')} | health {value(d.get('health_percent'), '%')}"
+
+    def render_ps(d):
+        on = "Online" if d.get("online") else "Offline"
+        cur = f" | {d['current_amperes']} A" if d.get("current_amperes") is not None else ""
+        usb = f" ({d['usb_type']})" if d.get("usb_type") else ""
+        return f"{d.get('name')} ({d.get('type')}): {on}{cur}{usb}"
+
+    def render_gpu(d):
+        clk = f" @ {value(d.get('frequency_mhz'), ' MHz', 0)}" if d.get("frequency_mhz") is not None else ""
+        return f"{d.get('name')} ({d.get('vendor')}): {value(d.get('busy_percent'), '%')}{clk} {value(d.get('temperature_celsius'), ' °C')}"
+
     groups = [
-        ("Batteries", "batteries", lambda d: f"{d.get('name')}: {value(d.get('percent'), '%')} {d.get('status') or 'Unknown'} | {value(d.get('power_watts'), ' W')} | health {value(d.get('health_percent'), '%')}"),
+        ("Batteries", "batteries", render_bat),
+        ("Power supplies", "power_supplies", render_ps),
         ("Network", "networks", lambda d: f"{d.get('name')}: ↓{value(None if d.get('rx_bytes_per_second') is None else d['rx_bytes_per_second']/1024, ' KiB/s')} ↑{value(None if d.get('tx_bytes_per_second') is None else d['tx_bytes_per_second']/1024, ' KiB/s')}"),
         ("Temperatures", "temperatures", lambda d: f"{d.get('name')} / {d.get('label')}: {value(d.get('celsius'), ' °C')}"),
         ("Fans", "fans", lambda d: f"{d.get('name')} / {d.get('label')}: {value(d.get('rpm'), ' RPM', 0)}"),
-        ("Graphics", "gpus", lambda d: f"{d.get('name')} ({d.get('vendor')}): {value(d.get('busy_percent'), '%')} {value(d.get('temperature_celsius'), ' °C')}"),
+        ("Graphics", "gpus", render_gpu),
         ("Measured power", "power", lambda d: f"{d.get('name')}: {value(d.get('watts'), ' W')}")]
     for title, key, render in groups:
         result += ["", title]
