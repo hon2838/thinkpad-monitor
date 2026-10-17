@@ -11,15 +11,20 @@ Every implementation diff was independently reviewed. The primary refined native
 disclosure icons, guarded invalid numeric thresholds, wrapped sensor-limit messages
 and fixed full-field scrolling after Ctrl+F expands a details section.
 
+- Runtime: Fedora, Python 3.14.8 and PySide6 6.11.2.
 - Baseline: **91 local tests passed**. Current suite: **105 tests passed** locally,
   including checks that measure enlarged-font value bounds on all detail pages,
   independent channel gaps, collapsed-content preservation, power-domain selection
   and reordering, real zeros, and visibility of the focused filter.
 - Synthetic previews cover light/dark themes, 1100×800, 1024×600 at 14pt, and
-  compact 480×640 / 360×600 at 14pt. All nine checked-in page previews now use
-  synthetic telemetry and the current UI.
+  compact 480×640 / 360×600 at 14pt, plus 2× scaling. All nine checked-in page
+  previews now use synthetic telemetry and the current UI.
 - Source desktop smoke, version 2.2.0, wheel/source builds and desktop-entry
-  validation passed. The installed user-local app was updated and smoke-tested.
+  validation passed. Final wheel metadata was checked across 54 platform/version
+  combinations. The installed user-local app was updated and smoke-tested.
+- The installed 2.2.0 app passed a native Wayland check on the current laptop:
+  seven real collector deliveries in four seconds, no collection error and
+  orderly shutdown. This is one KDE/Wayland session, not coverage of all desktops.
 - Previous main CI failed on x86-64/Python 3.10 with PySide6 6.12.0; a standalone
   Qt label probe also lost None references without importing the app. Selecting
   Qt below 6.12 on older Linux x86-64 Python resolved that failure in all four
@@ -28,9 +33,11 @@ and fixed full-field scrolling after Ctrl+F expands a details section.
   interpreters retain current Qt. No interpreter reference-count manipulation or
   omitted application tests are used.
 
-The complete UI change is being checked in the same four-job remote matrix.
-The headless results do not certify GNOME, Xfce, other desktop sessions or physical
-ARM64 hardware. Native session checks are reported separately below.
+The complete UI change passed the same four-job remote matrix, with **105 tests
+in every job**, JSON collection, desktop smoke, distribution builds and desktop
+entry validation: [verified UI run](https://github.com/hon2838/thinkpad-monitor/actions/runs/39075710075).
+The headless results do not certify GNOME, Xfce, other desktop sessions, screen
+readers or physical ARM64 hardware.
 
 ## Earlier local validation of main / v2.0.0
 
