@@ -79,14 +79,23 @@ thinkpad-monitor --interval 5    # refresh every five seconds
 thinkpad-monitor --version
 ```
 
-The desktop offers refresh, pause/resume, a remembered refresh interval, a bounded CPU history
-plot, and filterable detail pages for batteries, networks, graphics and sensors. It uses your
+The desktop offers refresh, pause/resume, a remembered refresh interval, bounded
+history charts, and expandable detail pages for batteries, networks, graphics and sensors. It uses your
 Qt theme, scrollable content and ordinary windows; collection runs in a background
 worker. It does not depend on a tray extension or a particular desktop shell.
 
 Use **Ctrl+R** to refresh, **Ctrl+P** to pause or resume, **Ctrl+F** to filter the
 current detail page, **Ctrl+C** to copy table rows, and **Alt+Left/Right** to change
-pages. An explicit `--interval` overrides the saved desktop setting.
+pages. Ctrl+F opens the relevant details section before focusing its filter. An
+explicit `--interval` overrides the saved desktop setting.
+
+Paired metric cards stack when the available width or system font requires it.
+Individual cores, full sensor lists and raw tables can be expanded when needed;
+collection continues while details are collapsed. Power history shows one selected
+measured domain, since sensor domains may overlap and cannot safely be added into
+a whole-laptop total. Unknown fan limits and thermal critical thresholds do not
+produce invented percentage gauges. Missing chart channels remain gaps; zero
+readings remain zero.
 
 The terminal supports **q** to quit, **Space** to pause, and **↑/↓** to scroll.
 `--legacy-tui` retains the original specialist ThinkPad/AMD terminal dashboard;

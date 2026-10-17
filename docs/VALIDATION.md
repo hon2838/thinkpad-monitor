@@ -1,4 +1,36 @@
-# Validation — 4 October 2026
+# Validation
+
+
+## UI usability continuation — 18 October 2026 (2.2.0)
+
+AGY ran with the requested `gemini-3.8-flash-medium` model and
+`--dangerously-skip-permissions`. After initial investigation, implementation
+ownership was split: AGY changed reusable widgets and their tests; the primary
+agent integrated pages, power-domain selection, keyboard behavior and documentation.
+Every implementation diff was independently reviewed. The primary refined native
+disclosure icons, guarded invalid numeric thresholds, wrapped sensor-limit messages
+and fixed full-field scrolling after Ctrl+F expands a details section.
+
+- Baseline: **91 local tests passed**. Current suite: **105 tests passed** locally,
+  including checks that measure enlarged-font value bounds on all detail pages,
+  independent channel gaps, collapsed-content preservation, power-domain selection
+  and reordering, real zeros, and visibility of the focused filter.
+- Synthetic previews cover light/dark themes, 1100×800, 1024×600 at 14pt, and
+  compact 480×640 / 360×600 at 14pt. All nine checked-in page previews now use
+  synthetic telemetry and the current UI.
+- Source desktop smoke, version 2.2.0, wheel/source builds and desktop-entry
+  validation passed. The installed user-local app was updated and smoke-tested.
+- Previous main CI failed on x86-64/Python 3.10 with PySide6 6.12.0; a standalone
+  Qt label probe also lost None references without importing the app. Selecting
+  Qt below 6.12 on older Linux x86-64 Python resolved that failure in all four
+  jobs of the [dependency validation run](https://github.com/hon2838/thinkpad-monitor/actions/runs/39074447785).
+  The earlier ARM64 restriction remains below 6.8 for Python below 3.12. Newer
+  interpreters retain current Qt. No interpreter reference-count manipulation or
+  omitted application tests are used.
+
+The complete UI change is being checked in the same four-job remote matrix.
+The headless results do not certify GNOME, Xfce, other desktop sessions or physical
+ARM64 hardware. Native session checks are reported separately below.
 
 ## Earlier local validation of main / v2.0.0
 

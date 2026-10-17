@@ -117,3 +117,30 @@ and replacement desktop in disjoint files with unittest coverage. Additional
 read-only reviews were requested. AGY's research attempt was unavailable because
 its headless tool permission configuration denied execution. Primary-agent review
 and local runtime checks determine acceptance, not subagent reports alone.
+
+## Compact layouts and clear measurements (2.2)
+
+Detail metric pairs use a content-aware responsive container. Wrapped labels reserve
+the height required by their actual font and width; cards stack when the pair no
+longer fits. Charts have a font-aware bounded height related to the window height.
+Individual core and sensor grids, secondary fan history and raw details are
+expandable native controls. Collapsing content preserves readings and selection;
+Ctrl+F expands the relevant section before focusing and scrolling to its filter.
+The System page retains its main details expanded by default.
+
+Dual-series graphs retain missing channels independently and break each affected
+line rather than inserting zeros or connecting across missing readings. Fan meters
+show RPM without an assumed motor maximum. Thermal meters use an actual positive
+critical threshold when supplied; unknown thresholds retain the temperature value
+without an invented percentage scale. Sensor-grid limits are disclosed alongside
+the complete detail table.
+
+Power domains can overlap and do not necessarily represent the whole device.
+The Power page selects one explicitly named domain instead of summing all rails.
+The selection survives reordering; switching or losing the selected domain clears
+its plotted history so readings from different sensors are not joined. Duplicate
+names use occurrence order, matching the existing table identity limitation.
+
+Gemini 3.8 Flash Medium was run through AGY with the user-requested permission-skip
+flag. Widget implementation and primary-agent page integration had separate file
+ownership, followed by independent review and validation.

@@ -1,6 +1,7 @@
 """Native Qt Widgets dashboard for Laptop Monitor (read-only, no tray)."""
 from __future__ import annotations
 import argparse
+import math
 import os
 import sys
 import time
@@ -140,6 +141,8 @@ class SampleWorker(QtCore.QObject):
 
 from .ui_components import (
     SummaryCard,
+    ResponsiveCardRow,
+    CollapsibleSection,
     UsageBar,
     CpuGraph,
     HistoryGraph,
@@ -161,6 +164,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
         self._settings = settings
         self._last_updated = None
         self._page_descriptions = {}
+        self._history_graphs = []
         self._shortcuts = []
         self._interval = max(0.25, float(interval))
         self._paused = False
@@ -344,6 +348,17 @@ class MonitorWindow(QtWidgets.QMainWindow):
                 color: palette(highlighted-text); }
             QListWidget#navigation::item:focus { border: 2px solid palette(text); }
             QPushButton, QComboBox, QLineEdit { min-height: 30px; }
+            QToolButton#collapsibleToggle, QPushButton#collapsibleToggle {
+                text-align: left; background: palette(base); color: palette(text);
+                border: 1px solid palette(midlight); border-radius: 9px;
+                min-height: 30px; padding: 4px 12px;
+            }
+            QToolButton#collapsibleToggle:hover, QPushButton#collapsibleToggle:hover {
+                background: palette(alternate-base);
+            }
+            QToolButton#collapsibleToggle:focus, QPushButton#collapsibleToggle:focus {
+                border: 2px solid palette(highlight); padding: 3px 11px;
+            }
             QLabel#statusBadge { background: palette(base); padding: 6px 10px;
                 border: 1px solid palette(midlight); border-radius: 9px; }
             QProgressBar#SummaryCardBar { background: palette(alternate-base);
@@ -422,6 +437,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(page)
         layout.setContentsMargins(4, 0, 4, 4)
         layout.setSpacing(14)
+        layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         page_title = self._section_title(title)
         title_font = page_title.font()
         title_font.setPointSizeF(title_font.pointSizeF() + 3)
@@ -443,7 +459,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
         self._page_picker.addItem(title)
         return layout
 
-    def _detail_panel(self, title, table):
+    def _detail_panel(self, title, table, expanded=False):
         panel = QtWidgets.QFrame()
         panel.setObjectName("detailPanel")
         layout = QtWidgets.QVBoxLayout(panel)
@@ -467,42 +483,33 @@ class MonitorWindow(QtWidgets.QMainWindow):
         layout.addLayout(bar)
         layout.addWidget(table, 1)
         table.setMinimumHeight(200)
-        return panel
+        return CollapsibleSection(title + " details", panel, expanded=expanded)
 
     def _cards_row(self, card1, card2):
-        row = QtWidgets.QHBoxLayout()
-        row.setSpacing(14)
-        row.addWidget(card1, 1)
-        row.addWidget(card2, 1)
+        row = QtWidgets.QVBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(ResponsiveCardRow(card1, card2))
         return row
 
-    def _history_panel(self, title, graph, description="Recent readings · gaps indicate paused or unavailable data"):
+    def _history_panel(self, title, graph, description="Recent readings · gaps indicate paused or unavailable data", collapsible=False):
         panel = QtWidgets.QFrame()
         panel.setObjectName("historyPanel")
         gl = QtWidgets.QVBoxLayout(panel)
         gl.setContentsMargins(20, 12, 20, 12)
-        gl.addWidget(self._section_title(title))
+        if not collapsible:
+            gl.addWidget(self._section_title(title))
+        self._history_graphs.append(graph)
         if description:
             desc = QtWidgets.QLabel(description)
             desc.setWordWrap(True)
             desc.setObjectName("secondaryText")
             gl.addWidget(desc)
-        gl.addWidget(graph, 1)
-        return panel
+        gl.addWidget(graph)
+        return CollapsibleSection(title, panel) if collapsible else panel
 
     def _gap_all_graphs(self):
-        for g in (getattr(self, "_graph", None),
-                  getattr(self, "_cpu_detail_graph", None),
-                  getattr(self, "_mem_graph", None),
-                  getattr(self, "_storage_graph", None),
-                  getattr(self, "_battery_graph", None),
-                  getattr(self, "_net_graph", None),
-                  getattr(self, "_therm_graph", None),
-                  getattr(self, "_fan_graph", None),
-                  getattr(self, "_power_graph", None),
-                  getattr(self, "_gpu_graph", None)):
-            if g is not None:
-                g.gap()
+        for graph in self._history_graphs:
+            graph.gap()
 
     def _build_cpu_tab(self):
         layout = self._add_scroll_tab("Processor", "CPU activity, frequency and individual cores")
@@ -521,10 +528,9 @@ class MonitorWindow(QtWidgets.QMainWindow):
         c_lay = QtWidgets.QVBoxLayout(core_panel)
         c_lay.setContentsMargins(16, 14, 16, 14)
         c_lay.setSpacing(10)
-        c_lay.addWidget(self._section_title("Logical cores"))
         self._core_grid = PerCoreGrid()
         c_lay.addWidget(self._core_grid)
-        layout.addWidget(core_panel)
+        layout.addWidget(CollapsibleSection("Individual cores", core_panel))
 
         self._cpu_table = DetailTable(["Metric", "Value"])
         layout.addWidget(self._detail_panel("Processor", self._cpu_table))
@@ -623,27 +629,25 @@ class MonitorWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._history_panel("Temperature history", self._therm_graph))
 
         self._fan_graph = HistoryGraph(title="Fan speed history", mode="rpm", series_labels=["Fan speed"])
-        layout.addWidget(self._history_panel("Fan speed history", self._fan_graph))
+        layout.addWidget(self._history_panel("Fan speed history", self._fan_graph, collapsible=True))
 
         thermal_grid_panel = QtWidgets.QFrame()
         thermal_grid_panel.setObjectName("detailPanel")
         tg_lay = QtWidgets.QVBoxLayout(thermal_grid_panel)
         tg_lay.setContentsMargins(16, 14, 16, 14)
         tg_lay.setSpacing(10)
-        tg_lay.addWidget(self._section_title("Thermal zones & sensors"))
         self._thermal_grid = ThermalZoneGrid()
         tg_lay.addWidget(self._thermal_grid)
-        layout.addWidget(thermal_grid_panel)
+        layout.addWidget(CollapsibleSection("All temperature sensors", thermal_grid_panel))
 
         fan_grid_panel = QtWidgets.QFrame()
         fan_grid_panel.setObjectName("detailPanel")
         fg_lay = QtWidgets.QVBoxLayout(fan_grid_panel)
         fg_lay.setContentsMargins(16, 14, 16, 14)
         fg_lay.setSpacing(10)
-        fg_lay.addWidget(self._section_title("Cooling fan tachometers"))
         self._fan_grid = FanSpeedGrid()
         fg_lay.addWidget(self._fan_grid)
-        layout.addWidget(fan_grid_panel)
+        layout.addWidget(CollapsibleSection("Individual cooling fans", fan_grid_panel))
 
         self._temp_table = DetailTable(["Sensor", "Label", "Temperature", "Critical limit"])
         layout.addWidget(self._detail_panel("Temperatures", self._temp_table))
@@ -652,7 +656,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
 
     def _build_power_tab(self):
         layout = self._add_scroll_tab("Power", "Actual power sensor readings and power supply status")
-        self._power_draw_card = SummaryCard("System Power Draw")
+        self._power_draw_card = SummaryCard("Measured Domain Power")
         self._power_draw_card.setObjectName("metricCard")
         self._power_draw_card.bar.hide()
         self._power_source_card = SummaryCard("Power Supply")
@@ -660,15 +664,25 @@ class MonitorWindow(QtWidgets.QMainWindow):
         self._power_source_card.bar.hide()
         layout.addLayout(self._cards_row(self._power_draw_card, self._power_source_card))
 
-        self._power_graph = HistoryGraph(title="Power consumption", mode="watts", series_labels=["Total power"])
-        layout.addWidget(self._history_panel("Power consumption history", self._power_graph))
+        self._power_entries = {}
+        self._selected_power_domain = None
+        self._power_domain_combo = QtWidgets.QComboBox()
+        self._power_domain_combo.setAccessibleName("Measured power domain")
+        self._power_domain_combo.setToolTip("Choose a measured sensor domain. Domains may overlap and are not a whole-laptop total.")
+        self._power_domain_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self._power_domain_combo.setMinimumContentsLength(12)
+        self._power_domain_combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        self._power_domain_combo.currentIndexChanged.connect(self._on_power_domain_changed)
+        layout.addWidget(self._power_domain_combo)
+        self._power_graph = HistoryGraph(title="Measured domain power", mode="watts", series_labels=["Selected domain"])
+        layout.addWidget(self._history_panel("Measured domain power history", self._power_graph,
+                         "Power reported by the selected sensor domain"))
 
         ps_panel = QtWidgets.QFrame()
         ps_panel.setObjectName("detailPanel")
         ps_lay = QtWidgets.QVBoxLayout(ps_panel)
         ps_lay.setContentsMargins(16, 14, 16, 14)
         ps_lay.setSpacing(10)
-        ps_lay.addWidget(self._section_title("Power supplies & chargers"))
         self._power_supplies_container = QtWidgets.QVBoxLayout()
         self._power_supplies_container.setSpacing(8)
         self._power_supply_cards = []
@@ -677,10 +691,59 @@ class MonitorWindow(QtWidgets.QMainWindow):
         self._no_power_supplies_label.setVisible(False)
         self._power_supplies_container.addWidget(self._no_power_supplies_label)
         ps_lay.addLayout(self._power_supplies_container)
-        layout.addWidget(ps_panel)
+        layout.addWidget(CollapsibleSection("Power supplies and chargers", ps_panel))
 
         self._power_table = DetailTable(["Domain", "Measured watts"])
         layout.addWidget(self._detail_panel("Measured power rails", self._power_table))
+
+    def _update_power_domains(self, powers):
+        entries = {}
+        occurrences = {}
+        for power in powers:
+            name = _text(power.get("name"))
+            occurrence = occurrences.get(name, 0)
+            occurrences[name] = occurrence + 1
+            key = repr((name, occurrence))
+            value = power.get("watts")
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                value = None
+            label = name if occurrence == 0 else f"{name} ({occurrence + 1})"
+            entries[key] = (label, value)
+        self._power_entries = entries
+        selected = self._selected_power_domain
+        if selected not in entries:
+            selected = next(iter(entries), None)
+        if selected != self._selected_power_domain:
+            self._selected_power_domain = selected
+            self._power_graph.clear()
+        desired = [(key, label) for key, (label, value) in entries.items()]
+        current = [(self._power_domain_combo.itemData(i), self._power_domain_combo.itemText(i))
+                   for i in range(self._power_domain_combo.count())]
+        if current != (desired or [(None, "No measured power domains")]):
+            blocker = QtCore.QSignalBlocker(self._power_domain_combo)
+            self._power_domain_combo.clear()
+            for key, label in desired or [(None, "No measured power domains")]:
+                self._power_domain_combo.addItem(label, key)
+            self._power_domain_combo.setCurrentIndex(max(0, self._power_domain_combo.findData(selected)))
+            del blocker
+        self._power_domain_combo.setEnabled(bool(entries))
+        self._show_power_domain(append=True)
+
+    def _show_power_domain(self, append=False):
+        label, value = self._power_entries.get(self._selected_power_domain, ("No readable power sensor", None))
+        self._power_draw_card.set_value(fmt_watts(value), label)
+        self._power_graph._series_labels = [label]
+        self._power_graph.setAccessibleName("Measured power history: " + label)
+        if append:
+            self._power_graph.append(value, timestamp=self._last_updated)
+
+    def _on_power_domain_changed(self, _index):
+        selected = self._power_domain_combo.currentData()
+        if selected == self._selected_power_domain or selected not in self._power_entries:
+            return
+        self._selected_power_domain = selected
+        self._power_graph.clear()
+        self._show_power_domain(append=True)
 
     def _update_power_supply_cards(self, supplies):
         if not supplies:
@@ -717,7 +780,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
     def _table_tab(self, title, headers, description=""):
         layout = self._add_scroll_tab(title, description)
         table = DetailTable(headers)
-        layout.addWidget(self._detail_panel(title, table), 1)
+        layout.addWidget(self._detail_panel(title, table, expanded=True), 1)
         return table
 
     def _build_summary_tab(self):
@@ -781,8 +844,9 @@ class MonitorWindow(QtWidgets.QMainWindow):
         history_description.setWordWrap(True)
         graph_layout.addWidget(history_description)
         self._graph = CpuGraph()
-        graph_layout.addWidget(self._graph, 1)
-        layout.addWidget(panel, 1)
+        self._history_graphs.append(self._graph)
+        graph_layout.addWidget(self._graph)
+        layout.addWidget(panel)
 
     def _select_page(self, index):
         if hasattr(self, '_tabs') and 0 <= index < self._tabs.count():
@@ -809,8 +873,26 @@ class MonitorWindow(QtWidgets.QMainWindow):
         page = self._tabs.currentWidget()
         search = page.findChild(QtWidgets.QLineEdit) if page is not None else None
         if search is not None:
+            ancestor = search.parentWidget()
+            while ancestor is not None and ancestor is not page:
+                if isinstance(ancestor, CollapsibleSection):
+                    ancestor.setExpanded(True)
+                ancestor = ancestor.parentWidget()
+            page.widget().layout().activate()
             search.setFocus()
             search.selectAll()
+            page.ensureWidgetVisible(search)
+            # Nested sections and wrapped cards settle after posted layout
+            # requests. Reveal the filter again at its final position.
+            def reveal_filter():
+                if (not self._shutting_down and self._tabs.currentWidget() is page
+                        and search.hasFocus()):
+                    center = search.mapTo(page.widget(), search.rect().center())
+                    # ensureWidgetVisible may consider only the input cursor;
+                    # reveal the complete field with room for its border.
+                    page.ensureVisible(center.x(), center.y(), 12, search.height() // 2 + 16)
+            QtCore.QTimer.singleShot(0, reveal_filter)
+            QtCore.QTimer.singleShot(20, reveal_filter)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -865,6 +947,9 @@ class MonitorWindow(QtWidgets.QMainWindow):
         if hasattr(self, "_fan_grid"):
             fan_cols = 2 if available >= 2 * 180 else 1
             self._fan_grid.set_columns(fan_cols)
+        chart_height = max(8 * self.fontMetrics().height(), min(230, int(self.height() * 0.30)))
+        for graph in self._history_graphs:
+            graph.setFixedHeight(chart_height)
 
     def _build_worker(self):
         self._thread = QtCore.QThread(self)
@@ -1186,19 +1271,7 @@ class MonitorWindow(QtWidgets.QMainWindow):
             self._gpu_vram_card.bar.set_usage(None)
         self._gpu_table.set_rows([[_text(g.get("name")), _text(g.get("vendor")), _text(g.get("driver")), fmt_percent(g.get("busy_percent")), fmt_mhz(g.get("frequency_mhz")), fmt_celsius(g.get("temperature_celsius")), fmt_bytes(g.get("memory_used_bytes")), fmt_bytes(g.get("memory_total_bytes"))] for g in gpus] or [["No GPUs detected"] + [""] * 7])
         powers = [p for p in _as_list(sample.get("power")) if isinstance(p, dict)]
-        tot_p_w = 0.0
-        has_p_w = False
-        for p in powers:
-            w = p.get("watts")
-            if w is not None and isinstance(w, (int, float)):
-                tot_p_w += float(w)
-                has_p_w = True
-        if has_p_w:
-            self._power_draw_card.set_value(fmt_watts(tot_p_w), f"{len(powers)} domain{'s' if len(powers) != 1 else ''} reporting")
-            self._power_graph.append(tot_p_w, timestamp=self._last_updated)
-        else:
-            self._power_draw_card.set_value(UNAVAILABLE, "No readable power sensor")
-            self._power_graph.append(None, timestamp=self._last_updated)
+        self._update_power_domains(powers)
 
         supplies = [ps for ps in _as_list(sample.get("power_supplies")) if isinstance(ps, dict)]
         self._update_power_supply_cards(supplies)

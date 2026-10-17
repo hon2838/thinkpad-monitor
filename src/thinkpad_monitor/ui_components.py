@@ -26,6 +26,8 @@ __all__ = [
     "FanMeterWidget",
     "FanSpeedGrid",
     "DetailTable",
+    "ResponsiveCardRow",
+    "CollapsibleSection",
 ]
 
 CPU_HISTORY_LIMIT = 180
@@ -338,6 +340,7 @@ class SummaryCard(QtWidgets.QFrame):
             QtCore.QEvent.Type.ApplicationFontChange,
         ):
             self._apply_card_style()
+            self.recalculate_height()
 
     def set_value(self, value, detail=None):
         if _is_missing(value):
@@ -360,11 +363,98 @@ class SummaryCard(QtWidgets.QFrame):
                     self._detail.setText("")
                     self._detail.setVisible(False)
                     self._refresh_accessible(shown, "")
+                    self.recalculate_height()
+                    if self.parentWidget() is not None and hasattr(self.parentWidget(), "reflow"):
+                        self.parentWidget().reflow()
                     return
             self._detail.setText(detail_shown)
             self._detail.setVisible(True)
             detail_text = detail_shown
         self._refresh_accessible(shown, detail_text)
+        self.recalculate_height()
+        if self.parentWidget() is not None and hasattr(self.parentWidget(), "reflow"):
+            self.parentWidget().reflow()
+
+    def natural_width(self) -> int:
+        """Width needed to show title, value, and detail without awkward wrapping."""
+        fm_val = QtGui.QFontMetrics(self._value.font())
+        w_val = fm_val.horizontalAdvance(self._value.text()) if self._value.text() else 0
+        fm_title = QtGui.QFontMetrics(self._title.font())
+        w_title = fm_title.horizontalAdvance(self._title.text()) + (self._ICON_SIZE + 8 if self._icon else 0)
+        w_det = 0
+        if self._detail.isVisible() and self._detail.text():
+            fm_det = QtGui.QFontMetrics(self._detail.font())
+            w_det = fm_det.horizontalAdvance(self._detail.text())
+        margins = self.layout().contentsMargins() if self.layout() else None
+        hm = (margins.left() + margins.right()) if margins else 32
+        base = self.font().pointSizeF() or 10.0
+        return max(int(round(base * 16)), max(w_val, w_title, w_det) + hm + 16)
+
+    def _calculate_needed_height(self, width: int) -> int:
+        margins = self.layout().contentsMargins() if self.layout() else None
+        hm = (margins.left() + margins.right()) if margins else 32
+        vm = (margins.top() + margins.bottom()) if margins else 28
+        inner_w = max(20, width - hm)
+
+        title_h = self._title.heightForWidth(inner_w - (self._ICON_SIZE + 6 if self._icon else 0))
+        h = max(self._ICON_SIZE if self._icon else 0, title_h)
+        spacing = self.layout().spacing() if self.layout() else 6
+
+        if not self._value.isHidden() and self._value.text():
+            val_h = self._value.heightForWidth(inner_w)
+            h += val_h + spacing
+
+        if not self._detail.isHidden() and self._detail.text():
+            det_h = self._detail.heightForWidth(inner_w)
+            h += det_h + spacing
+
+        if not self.bar.isHidden() or self.bar.sizePolicy().retainSizeWhenHidden():
+            h += self.bar.height() + spacing
+
+        return h + vm
+
+    def recalculate_height(self, width: int | None = None):
+        """Update label minimum heights based on allocated or available width."""
+        w = width if (width is not None and width > 0) else self.width()
+        margins = self.layout().contentsMargins() if self.layout() else None
+        hm = (margins.left() + margins.right()) if margins else 32
+        inner_w = max(20, w - hm)
+
+        if not self._value.isHidden() and self._value.text():
+            val_h = self._value.heightForWidth(inner_w)
+            fm = QtGui.QFontMetrics(self._value.font())
+            self._value.setMinimumHeight(max(fm.lineSpacing(), val_h))
+
+        if not self._detail.isHidden() and self._detail.text():
+            det_h = self._detail.heightForWidth(inner_w)
+            fm = QtGui.QFontMetrics(self._detail.font())
+            self._detail.setMinimumHeight(max(fm.lineSpacing() + 2, det_h))
+
+        self.updateGeometry()
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        return self._calculate_needed_height(width)
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # noqa: N802
+        base = self.font().pointSizeF() or 10.0
+        fm_val = QtGui.QFontMetrics(self._value.font())
+        tokens = self._value.text().split() if self._value.text() else []
+        max_token_w = max((fm_val.horizontalAdvance(t) for t in tokens), default=0)
+        margins = self.layout().contentsMargins() if self.layout() else None
+        hm = (margins.left() + margins.right()) if margins else 32
+        min_w = max(140, int(round(base * 10)), max_token_w + hm + 8)
+        return QtCore.QSize(min_w, self._calculate_needed_height(min_w))
+
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802
+        w = max(200, self.natural_width())
+        return QtCore.QSize(w, self._calculate_needed_height(w))
+
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        self.recalculate_height(event.size().width())
 
     def _refresh_accessible(self, value_text, detail_text):
         desc = "%s: %s" % (self._card_title, value_text)
@@ -377,6 +467,112 @@ class SummaryCard(QtWidgets.QFrame):
     @property
     def value_text(self):
         return self._value.text()
+
+
+class ResponsiveCardRow(QtWidgets.QWidget):
+    """Container for detail summary cards that stacks vertically when available
+
+    width or card contents require it, and lays out horizontally when there is
+    sufficient room.
+    """
+
+    def __init__(self, card1: SummaryCard, card2: SummaryCard, parent=None, spacing: int = 14):
+        super().__init__(parent)
+        self.setObjectName("responsiveCardRow")
+        self._cards = [card1, card2]
+        self._spacing = max(0, int(spacing))
+        self._stacked = False
+
+        self._grid = QtWidgets.QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(self._spacing)
+
+        for card in self._cards:
+            card.setParent(self)
+
+        self._apply_layout(force=True)
+
+    @property
+    def cards(self) -> list[SummaryCard]:
+        return list(self._cards)
+
+    @property
+    def is_stacked(self) -> bool:
+        return self._stacked
+
+    def isStacked(self) -> bool:
+        return self._stacked
+
+    def _needed_horizontal_width(self) -> int:
+        return sum(card.natural_width() for card in self._cards) + self._spacing
+
+    def reflow(self):
+        w = self.width()
+        if w <= 0 and self.parentWidget():
+            w = self.parentWidget().width()
+        if w <= 0:
+            return
+
+        needed = self._needed_horizontal_width()
+        should_stack = (w < needed)
+
+        if should_stack != self._stacked:
+            self._stacked = should_stack
+            self._apply_layout()
+
+        card_w = w if self._stacked else max(50, (w - self._spacing) // 2)
+        for card in self._cards:
+            card.recalculate_height(card_w)
+        self.updateGeometry()
+
+    def _apply_layout(self, force=False):
+        while self._grid.count():
+            self._grid.takeAt(0)
+
+        if self._stacked:
+            self._grid.setColumnStretch(0, 1)
+            self._grid.setColumnStretch(1, 0)
+            for idx, card in enumerate(self._cards):
+                self._grid.addWidget(card, idx, 0)
+        else:
+            self._grid.setColumnStretch(0, 1)
+            self._grid.setColumnStretch(1, 1)
+            for idx, card in enumerate(self._cards):
+                self._grid.addWidget(card, 0, idx)
+
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        self.reflow()
+
+    def changeEvent(self, event):  # noqa: N802
+        super().changeEvent(event)
+        if event.type() in (
+            QtCore.QEvent.Type.FontChange,
+            QtCore.QEvent.Type.ApplicationFontChange,
+            QtCore.QEvent.Type.StyleChange,
+        ):
+            self.reflow()
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        needed = self._needed_horizontal_width()
+        if width < needed:
+            return sum(c.heightForWidth(width) for c in self._cards) + self._spacing
+        else:
+            w_each = max(50, (width - self._spacing) // 2)
+            return max(c.heightForWidth(w_each) for c in self._cards)
+
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802
+        needed = self._needed_horizontal_width()
+        w = self.width() if self.width() > 0 else needed
+        return QtCore.QSize(needed, self.heightForWidth(w))
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # noqa: N802
+        min_card_w = max(c.minimumSizeHint().width() for c in self._cards)
+        return QtCore.QSize(min_card_w, self.heightForWidth(min_card_w))
+
 
 
 class HistoryGraph(QtWidgets.QWidget):
@@ -434,7 +630,7 @@ class HistoryGraph(QtWidgets.QWidget):
             if self._pending_break and self._points:
                 self._breaks.add(len(self._points))
             self._pending_break = False
-            self._points.append((moment, (c1 or 0.0, c2 or 0.0)))
+            self._points.append((moment, (c1, c2)))
 
         if len(self._points) > self._limit:
             excess = len(self._points) - self._limit
@@ -443,6 +639,25 @@ class HistoryGraph(QtWidgets.QWidget):
             self._breaks = kept
         self._refresh_accessible()
         self.update()
+
+    def segments_for_series(self, series_index: int = 0) -> list[list[tuple[float, float]]]:
+        """Returns list of continuous segments of (moment, value) for the specified series."""
+        segments: list[list[tuple[float, float]]] = []
+        current: list[tuple[float, float]] = []
+        for p_idx, (moment, raw_val) in enumerate(self._points):
+            if p_idx in self._breaks and current:
+                segments.append(current)
+                current = []
+            val = raw_val[series_index] if self._series_count > 1 else raw_val
+            if val is None:
+                if current:
+                    segments.append(current)
+                    current = []
+            else:
+                current.append((moment, float(val)))
+        if current:
+            segments.append(current)
+        return segments
 
     def _coerce_value(self, val):
         if self._mode == "percent":
@@ -491,7 +706,9 @@ class HistoryGraph(QtWidgets.QWidget):
             return
         latest = self._points[-1][1]
         if self._series_count == 1:
-            if self._mode == "watts":
+            if latest is None:
+                latest_str = UNAVAILABLE
+            elif self._mode == "watts":
                 latest_str = f"{latest:.1f} W"
             elif self._mode == "rpm":
                 latest_str = f"{int(round(latest))} RPM"
@@ -502,7 +719,23 @@ class HistoryGraph(QtWidgets.QWidget):
             else:
                 latest_str = f"{latest:.0f}"
         else:
-            latest_str = ", ".join(f"{v:.0f}" for v in latest)
+            parts = []
+            for v in latest:
+                if v is None:
+                    parts.append(UNAVAILABLE)
+                elif self._mode == "rate":
+                    parts.append(_format_rate_unit(v))
+                elif self._mode == "temp":
+                    parts.append(f"{v:.1f} °C")
+                elif self._mode == "watts":
+                    parts.append(f"{v:.1f} W")
+                elif self._mode == "rpm":
+                    parts.append(f"{int(round(v))} RPM")
+                elif self._mode == "percent":
+                    parts.append(f"{v:.0f}%")
+                else:
+                    parts.append(f"{v:.0f}")
+            latest_str = ", ".join(parts)
         self.setAccessibleDescription(
             f"{self._title}: latest {latest_str}, {count} readings, {self.time_labels()[0]}"
         )
@@ -676,14 +909,11 @@ class HistoryGraph(QtWidgets.QWidget):
 
             for s_idx in range(self._series_count):
                 series_color = colors[s_idx % len(colors)]
-                segments: list[list[QtCore.QPointF]] = [[]]
-                for p_idx, (moment, raw_val) in enumerate(self._points):
-                    if p_idx in self._breaks and segments[-1]:
-                        segments.append([])
-                    val = raw_val[s_idx] if self._series_count > 1 else raw_val
-                    if val is not None:
-                        segments[-1].append(to_point(moment, val))
-                segments = [s for s in segments if s]
+                raw_segs = self.segments_for_series(s_idx)
+                segments: list[list[QtCore.QPointF]] = [
+                    [to_point(m, v) for m, v in seg]
+                    for seg in raw_segs if seg
+                ]
 
                 if s_idx == 0:
                     top_fill = QtGui.QColor(series_color)
@@ -740,16 +970,18 @@ class HistoryGraph(QtWidgets.QWidget):
                 legend_items = []
                 for s_idx, label in enumerate(self._series_labels):
                     val = latest_raw[s_idx] if self._series_count > 1 else latest_raw
-                    if self._mode == "rate":
+                    if val is None:
+                        val_str = UNAVAILABLE
+                    elif self._mode == "rate":
                         val_str = _format_rate_unit(val)
                     elif self._mode == "temp":
-                        val_str = f"{val:.1f} °C" if val is not None else UNAVAILABLE
+                        val_str = f"{val:.1f} °C"
                     elif self._mode == "watts":
-                        val_str = f"{val:.1f} W" if val is not None else UNAVAILABLE
+                        val_str = f"{val:.1f} W"
                     elif self._mode == "rpm":
-                        val_str = f"{int(round(val))} RPM" if val is not None else UNAVAILABLE
+                        val_str = f"{int(round(val))} RPM"
                     else:
-                        val_str = f"{val:.0f}%" if val is not None else UNAVAILABLE
+                        val_str = f"{val:.0f}%"
                     legend_items.append((label, val_str, colors[s_idx % len(colors)]))
 
                 legend_x = plot.right() - 6
@@ -1304,17 +1536,37 @@ class ThermalZoneBar(QtWidgets.QFrame):
         if celsius is not None:
             try:
                 c_val = float(celsius)
-                crit_val = float(crit_celsius) if crit_celsius is not None else 100.0
-                crit_val = max(50.0, crit_val)
-                pct = max(0.0, min(100.0, (c_val / crit_val) * 100.0))
-                self.bar.set_usage(pct)
-                crit_str = f" (crit {crit_celsius:.0f}°C)" if crit_celsius is not None else ""
-                self._temp_label.setText(f"{c_val:.1f} °C{crit_str}")
+                if not math.isfinite(c_val):
+                    raise ValueError("nonfinite temperature")
             except (ValueError, TypeError):
                 self.bar.set_usage(None)
+                self.bar.hide()
                 self._temp_label.setText(UNAVAILABLE)
+                self.setAccessibleName(f"{self._title.text()}: {self._temp_label.text()}")
+                self.setAccessibleDescription(f"{self._title.text()} temperature {self._temp_label.text()}")
+                return
+
+            crit_val = None
+            if crit_celsius is not None:
+                try:
+                    cv = float(crit_celsius)
+                    if math.isfinite(cv) and cv > 0:
+                        crit_val = cv
+                except (ValueError, TypeError):
+                    crit_val = None
+
+            if crit_val is not None:
+                pct = max(0.0, min(100.0, (c_val / crit_val) * 100.0))
+                self.bar.set_usage(pct)
+                self.bar.show()
+                self._temp_label.setText(f"{c_val:.1f} °C (crit {crit_val:.0f}°C)")
+            else:
+                self.bar.set_usage(None)
+                self.bar.hide()
+                self._temp_label.setText(f"{c_val:.1f} °C")
         else:
             self.bar.set_usage(None)
+            self.bar.hide()
             self._temp_label.setText(UNAVAILABLE)
         self.setAccessibleName(f"{self._title.text()}: {self._temp_label.text()}")
         self.setAccessibleDescription(f"{self._title.text()} temperature {self._temp_label.text()}")
@@ -1333,18 +1585,31 @@ class ThermalZoneGrid(QtWidgets.QWidget):
         self._columns = 3
         self._no_sensors_label = QtWidgets.QLabel("No temperature sensors detected", self)
         self._no_sensors_label.setObjectName("secondaryText")
+        self._no_sensors_label.setWordWrap(True)
         self._layout.addWidget(self._no_sensors_label, 0, 0)
+        self._cap_label = QtWidgets.QLabel("", self)
+        self._cap_label.setObjectName("secondaryText")
+        self._cap_label.setWordWrap(True)
+        self._cap_label.setVisible(False)
+        self._layout.addWidget(self._cap_label, 1, 0)
 
     def update_sensors(self, sensors: list[dict]):
         valid_sensors = [s for s in (sensors or []) if isinstance(s, dict) and s.get("celsius") is not None]
         if not valid_sensors:
             self._no_sensors_label.setVisible(True)
+            self._cap_label.setVisible(False)
             for w in self._widgets:
                 w.setVisible(False)
             return
 
         self._no_sensors_label.setVisible(False)
         count = min(12, len(valid_sensors))
+        if len(valid_sensors) > 12:
+            self._cap_label.setText(f"Showing 12 of {len(valid_sensors)} sensors (all available in table below)")
+            self._cap_label.setVisible(True)
+        else:
+            self._cap_label.setVisible(False)
+
         if len(self._widgets) != count:
             for w in self._widgets:
                 self._layout.removeWidget(w)
@@ -1370,6 +1635,9 @@ class ThermalZoneGrid(QtWidgets.QWidget):
     def _reflow(self):
         for i, w in enumerate(self._widgets):
             self._layout.addWidget(w, i // self._columns, i % self._columns)
+        if self._cap_label is not None:
+            row = (len(self._widgets) + self._columns - 1) // self._columns if self._widgets else 1
+            self._layout.addWidget(self._cap_label, row, 0, 1, self._columns)
 
 
 class FanMeterWidget(QtWidgets.QFrame):
@@ -1409,20 +1677,38 @@ class FanMeterWidget(QtWidgets.QFrame):
         self.bar.setTextVisible(False)
         layout.addWidget(self.bar)
 
-    def update_fan(self, label, rpm):
+    def update_fan(self, label, rpm, max_rpm=None):
         self._title.setText(str(label))
         if rpm is not None:
             try:
                 r_val = float(rpm)
-                pct = max(0.0, min(100.0, (r_val / 5500.0) * 100.0))
-                self.bar.set_usage(pct)
+                if not math.isfinite(r_val) or r_val < 0:
+                    raise ValueError("invalid fan speed")
                 status = "Off / 0 RPM" if r_val <= 0 else f"{int(round(r_val))} RPM"
                 self._rpm_label.setText(status)
+                if max_rpm is not None:
+                    try:
+                        m_val = float(max_rpm)
+                        if math.isfinite(m_val) and m_val > 0:
+                            pct = max(0.0, min(100.0, (r_val / m_val) * 100.0))
+                            self.bar.set_usage(pct)
+                            self.bar.show()
+                        else:
+                            self.bar.set_usage(None)
+                            self.bar.hide()
+                    except (ValueError, TypeError):
+                        self.bar.set_usage(None)
+                        self.bar.hide()
+                else:
+                    self.bar.set_usage(None)
+                    self.bar.hide()
             except (ValueError, TypeError):
                 self.bar.set_usage(None)
+                self.bar.hide()
                 self._rpm_label.setText(UNAVAILABLE)
         else:
             self.bar.set_usage(None)
+            self.bar.hide()
             self._rpm_label.setText(UNAVAILABLE)
         self.setAccessibleName(f"{self._title.text()}: {self._rpm_label.text()}")
         self.setAccessibleDescription(f"{self._title.text()} speed {self._rpm_label.text()}")
@@ -1439,8 +1725,9 @@ class FanSpeedGrid(QtWidgets.QWidget):
         self._layout.setSpacing(8)
         self._widgets: list[FanMeterWidget] = []
         self._columns = 2
-        self._no_fans_label = QtWidgets.QLabel("No cooling fans detected or controllable by driver", self)
+        self._no_fans_label = QtWidgets.QLabel("No fan readings are available.", self)
         self._no_fans_label.setObjectName("secondaryText")
+        self._no_fans_label.setWordWrap(True)
         self._layout.addWidget(self._no_fans_label, 0, 0)
 
     def update_fans(self, fans: list[dict]):
@@ -1466,7 +1753,7 @@ class FanSpeedGrid(QtWidgets.QWidget):
         for i, f in enumerate(valid_fans):
             label = f.get("label") or f.get("name") or f"Fan {i+1}"
             self._widgets[i].setVisible(True)
-            self._widgets[i].update_fan(label, f.get("rpm"))
+            self._widgets[i].update_fan(label, f.get("rpm"), f.get("max_rpm"))
 
     def set_columns(self, columns: int):
         cols = max(1, int(columns))
@@ -1478,3 +1765,92 @@ class FanSpeedGrid(QtWidgets.QWidget):
         for i, w in enumerate(self._widgets):
             self._layout.addWidget(w, i // self._columns, i % self._columns)
 
+
+class CollapsibleSection(QtWidgets.QWidget):
+    """A disclosure section with a native checkable button and arrow icon."""
+
+    toggled = QtCore.Signal(bool)
+
+    def __init__(self, title: str, content_widget: QtWidgets.QWidget, expanded: bool = False, parent=None):
+        super().__init__(parent)
+        self.setObjectName("collapsibleSection")
+        self._title = str(title)
+        self._content_widget = content_widget
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+
+        # A native checkable button keeps keyboard and accessibility behavior.
+        self._toggle_button = QtWidgets.QPushButton(self)
+        self._toggle_button.setObjectName("collapsibleToggle")
+        self._toggle_button.setCheckable(True)
+        self._toggle_button.setChecked(bool(expanded))
+        self._toggle_button.setAutoDefault(False)
+        self._toggle_button.setIconSize(QtCore.QSize(16, 16))
+        self._toggle_button.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self._toggle_button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self._toggle_button.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        font = QtGui.QFont(self._toggle_button.font())
+        font.setBold(True)
+        self._toggle_button.setFont(font)
+        self._toggle_button.toggled.connect(self._on_toggled)
+
+        lay.addWidget(self._toggle_button)
+
+        if content_widget is not None:
+            content_widget.setParent(self)
+            lay.addWidget(content_widget)
+            content_widget.setVisible(bool(expanded))
+
+        self._update_toggle_state(bool(expanded))
+
+    @property
+    def content_widget(self) -> QtWidgets.QWidget:
+        return self._content_widget
+
+    def isExpanded(self) -> bool:  # noqa: N802
+        return self._toggle_button.isChecked()
+
+    def is_expanded(self) -> bool:
+        return self._toggle_button.isChecked()
+
+    def setExpanded(self, expanded: bool):  # noqa: N802
+        self._toggle_button.setChecked(bool(expanded))
+
+    def set_expanded(self, expanded: bool):
+        self._toggle_button.setChecked(bool(expanded))
+
+    def toggle(self):
+        self._toggle_button.toggle()
+
+    def _on_toggled(self, checked: bool):
+        self._update_toggle_state(checked)
+        if self._content_widget is not None:
+            self._content_widget.setVisible(checked)
+        self.updateGeometry()
+        if self.parentWidget():
+            self.parentWidget().updateGeometry()
+        self.toggled.emit(checked)
+
+    def _update_toggle_state(self, checked: bool):
+        arrow = QtWidgets.QStyle.StandardPixmap.SP_ArrowDown if checked else QtWidgets.QStyle.StandardPixmap.SP_ArrowRight
+        self._toggle_button.setText(self._title)
+        self._toggle_button.setIcon(self.style().standardIcon(arrow, None, self._toggle_button))
+        state_text = "expanded" if checked else "collapsed"
+        self._toggle_button.setAccessibleName(f"{self._title} section")
+        self._toggle_button.setAccessibleDescription(
+            f"{self._title} section is {state_text}. Press to {'collapse' if checked else 'expand'}."
+        )
+
+    def changeEvent(self, event):  # noqa: N802
+        super().changeEvent(event)
+        if hasattr(self, "_toggle_button") and event.type() in (
+            QtCore.QEvent.Type.PaletteChange,
+            QtCore.QEvent.Type.ApplicationPaletteChange,
+            QtCore.QEvent.Type.StyleChange,
+        ):
+            self._update_toggle_state(self.isExpanded())
