@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "thinkpad-monitor"
-version = "2.1.0"
+version = "2.2.0"
 description = "Capability-aware Linux laptop monitor with native desktop and terminal interfaces"
 readme = "README.md"
 authors = [{ name = "Matthew Hon", email = "hon2838@gmail.com" }]
@@ -31,11 +31,12 @@ thinkpad-monitor-desktop = "thinkpad_monitor.cli:desktop_main"
 
 [project.optional-dependencies]
 desktop = [
-    # PySide6 6.8/6.10/6.11 wheels abort on Linux ARM64 / Python 3.10 during
-    # repeated widget calls. Older interpreters need an earlier binding;
-    # newer Python versions and x86-64 use the current binding.
+    # Native-widget probes reproduce reference-count crashes with newer wheels
+    # on older Python: ARM64 needs Qt <6.8; x86-64 needs Qt <6.12.
+    # Keep current Qt bindings available for Python 3.12 and newer.
     "PySide6>=6.6,<6.8; python_version >= '3.10' and python_version < '3.12' and platform_system == 'Linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
-    "PySide6>=6.6,<7; python_version >= '3.10' and (python_version >= '3.12' or platform_system != 'Linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64'))",
+    "PySide6>=6.6,<6.12; python_version >= '3.10' and python_version < '3.12' and platform_system == 'Linux' and platform_machine != 'aarch64' and platform_machine != 'arm64'",
+    "PySide6>=6.6,<7; python_version >= '3.10' and (python_version >= '3.12' or platform_system != 'Linux')",
 ]
 
 [tool.setuptools.data-files]

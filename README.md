@@ -25,7 +25,8 @@ architectures can use the base package if psutil and curses are available; deskt
 support depends on a compatible distribution PySide6 build. Pip desktop wheels
 require a compatible glibc distribution; they are not universal musl/Alpine binaries.
 On Linux ARM64, Python 3.10/3.11 installs select Qt 6.7 to avoid a reproduced
-wheel compatibility crash; Python 3.12+ uses current Qt bindings.
+wheel compatibility crash. Linux x86-64 on Python 3.10/3.11 selects Qt below
+6.12 after a similar standalone widget crash. Python 3.12+ uses current Qt bindings.
 
 From this checkout, install into a dedicated user-local environment and add a
 **Laptop Monitor** applications-menu shortcut:
